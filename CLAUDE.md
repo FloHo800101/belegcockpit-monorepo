@@ -38,10 +38,24 @@ beleg-cockpit/
 - `/kanzlei` – Übersicht aller Mandanten
 - `/kanzlei/mandant/:id/cluster/:clusterKey` – Cluster-Arbeitsliste
 
-## Offene Aufgaben
-- [ ] Frontend an echtes Supabase-Backend anbinden
-- [ ] Shared Types zwischen Frontend und Backend definieren
-- [ ] CI/CD aufsetzen
+## Offene Aufgaben (Roadmap)
+1. [ ] API Contract / Shared Data Model (Frontend ↔ Backend verbinden)
+2. [ ] Authentifizierung (Supabase Auth ins Frontend integrieren)
+3. [ ] Rollen & Berechtigungen (Mandant vs. Kanzlei)
+4. [ ] Feature Entitlement (welche Features für welche Rolle/Plan)
+5. [ ] Testautomatisierung (Frontend + Backend)
+
+## Git-Workflow (in Diskussion)
+- Strategie: GitHub Flow (Feature-Branches + PR in main)
+- Branch-Naming: `frontend/<beschreibung>` / `backend/<beschreibung>`
+- Commit-Konvention: Conventional Commits (`feat(frontend):`, `fix(backend):`, `chore:`)
+- Branch Protection auf `main`: noch nicht aktiviert (in Entscheidung)
+- 2 Entwickler: einer Frontend, einer Backend
+
+## Team
+- 2 Entwickler, beide VS Code
+- GitHub: https://github.com/FloHo800101/belegcockpit-monorepo
+- GitHub Pages: https://floho800101.github.io/belegcockpit-monorepo/
 
 ## Paketmanager
 pnpm überall. Kommandos vom Root:
