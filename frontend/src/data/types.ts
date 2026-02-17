@@ -1,29 +1,56 @@
-// BelegCockpit Type Definitions
+/**
+ * BelegCockpit Frontend Type Definitions
+ *
+ * Gemeinsame Domänen-Typen werden aus @beleg-cockpit/shared re-exportiert.
+ * Hier verbleiben nur Frontend-spezifische Typen, UI-Konfigurationen und Mock-Daten-Shapes.
+ *
+ * Bestehende Importe aus '@/data/types' funktionieren weiterhin ohne Änderungen.
+ */
 
-export type TransactionStatus = 
-  | 'matched_confident'
-  | 'matched_uncertain'
-  | 'missing_receipt'
-  | 'resolved_no_receipt'
-  | 'resolved_self_receipt'
-  | 'resolved_private';
+// =====================================================================
+// Re-Exports aus @beleg-cockpit/shared (Single Source of Truth)
+// =====================================================================
 
-export type MandantPackageKey = 
-  | 'monthly_invoices'
-  | 'small_no_receipt'
-  | 'top_amounts'
-  | 'marketplace_statement'
-  | 'other_open'
-  | 'refunds'
-  | 'subscriptions'
-  | 'bundles'
-  | 'review'
-  | 'confirm'
-  | 'none';
+export type {
+  // Mandant-Workflow
+  TransactionStatus,
+  MandantPackageKey,
+  // Kanzlei-Workflow
+  KanzleiCluster,
+  SfaQueueId,
+  SfaCaseStatus,
+  SfaTriggerReason,
+  SfaMandantStatus,
+  // Matching
+  Direction,
+} from '@beleg-cockpit/shared';
 
-// Review item for "Zuordnungen kurz prüfen"
-export type ReviewReason = 'low_confidence' | 'amount_deviation' | 'date_deviation' | 'classification' | 'ambiguous';
+// =====================================================================
+// Frontend-spezifische Typen (UI-State, Mock-Daten, Formulare)
+// =====================================================================
 
+import type {
+  TransactionStatus,
+  MandantPackageKey,
+  KanzleiCluster,
+  SfaQueueId,
+  SfaCaseStatus,
+  SfaTriggerReason,
+  SfaMandantStatus,
+} from '@beleg-cockpit/shared';
+
+/** Qualität des hochgeladenen Belegfotos. */
+export type DocumentQuality = 'ok' | 'bad_photo';
+
+/** Auslöser für eine manuelle Review-Anfrage (Konfidenz, Abweichung etc.). */
+export type ReviewReason =
+  | 'low_confidence'
+  | 'amount_deviation'
+  | 'date_deviation'
+  | 'classification'
+  | 'ambiguous';
+
+/** Einzelner Prüfungseintrag für den "Zuordnungen kurz prüfen"-Workflow. */
 export interface ReviewItem {
   id: string;
   transactionId: string;
@@ -35,59 +62,56 @@ export interface ReviewItem {
   documentName: string;
   documentDate: string;
   documentAmount: number;
+  /** Konfidenz des automatischen Matches (0–100). */
   confidence: number;
   reviewReason: ReviewReason;
   deviationDetails?: string;
   status: 'pending' | 'confirmed' | 'rejected' | 'handed_over';
 }
 
-export type KanzleiCluster = 
-  | 'missing'
-  | 'many_to_one'
-  | 'one_to_many'
-  | 'duplicate_risk'
-  | 'amount_variance'
-  | 'timing'
-  | 'vendor_unknown'
-  | 'tax_risk'
-  | 'fees'
-  | 'anomaly'
-  | 'refund_reversal';
-
-export type DocumentQuality = 'ok' | 'bad_photo';
-
+/**
+ * Banktransaktion im Frontend-State.
+ * Erweitert die API-Entität um UI-Workflow-Felder und Mandanten-Anzeige-Felder.
+ */
 export interface Transaction {
   id: string;
-  date: string;
-  amount: number;
+  date: string;                              // YYYY-MM-DD
+  amount: number;                            // positiv = Gutschrift, negativ = Belastung
   currency: string;
-  merchant: string;
-  paymentMethod: string;
+  merchant: string;                          // Anzeigename des Händlers/Empfängers
+  paymentMethod: string;                     // "Bank" | "Card" | "PayPal" | "Stripe" | "Amazon"
   status: TransactionStatus;
-  matchConfidence: number;
-  mandantActionPrimary: string;
+  matchConfidence: number;                   // 0–100
+  mandantActionPrimary: string;              // UI-Aktions-Hint
   mandantPackageKey: MandantPackageKey;
-  mandantReasonHint: string;
+  mandantReasonHint: string;                 // Begründungstext für den Mandanten
   kanzleiClusterPrimary: KanzleiCluster;
-  kanzleiReasonHint: string;
+  kanzleiReasonHint: string;                 // Begründungstext für die SFA
   candidateDocumentIds?: string[];
   /** Realistischer Bank-/Kartenumsatztext – NIEMALS Status-/Systemtexte! */
   purpose?: string;
 }
 
+/** Beleg/Dokument im Frontend-State (vereinfachte Ansicht für UI). */
 export interface Document {
   id: string;
   supplierName: string;
-  date: string;
+  date: string;                              // YYYY-MM-DD
   total: number;
   vat: number;
   linkedTransactionId: string | null;
   quality: DocumentQuality;
 }
 
+/**
+ * Mandanten-Übersicht für das Kanzlei-Dashboard.
+ * Entspricht dem API-Typ `MandantMonthSummary` aus @beleg-cockpit/shared,
+ * hier als Frontend-Mock-Shape (vereinfacht, ohne monthId-Felder).
+ */
 export interface Mandant {
   id: string;
   name: string;
+  /** z.B. "Januar 2026" */
   month: string;
   transactionCount: number;
   documentCount: number;
@@ -95,10 +119,10 @@ export interface Mandant {
   matchedUncertain: number;
   missingReceipt: number;
   hasRiskFlag: boolean;
-  lastActivity: string;
+  lastActivity: string;                      // YYYY-MM-DD
 }
 
-// Eigenbeleg form data
+/** Eigenbeleg-Formular-Daten (Mandant erstellt eigene Quittung). */
 export interface EigenbelegData {
   date: string;
   amount: number;
@@ -106,9 +130,13 @@ export interface EigenbelegData {
   note?: string;
 }
 
-// Cluster configuration for Kanzlei
-export const CLUSTER_CONFIG: Record<KanzleiCluster, { 
-  label: string; 
+// =====================================================================
+// Kanzlei-Cluster-Konfiguration (UI-Labels und Bulk-Aktionen)
+// =====================================================================
+
+/** Anzeige-Konfiguration und Bulk-Aktionen pro Cluster (nur Frontend). */
+export const CLUSTER_CONFIG: Record<KanzleiCluster, {
+  label: string;
   description: string;
   bulkActions: string[];
 }> = {
@@ -139,7 +167,7 @@ export const CLUSTER_CONFIG: Record<KanzleiCluster, {
   },
   timing: {
     label: 'Timing/In-Transit',
-    description: 'Periodenabgrenzung',
+    description: 'Periodenabgrenzung (inkl. Privatvorschuss + Sammelüberweisung)',
     bulkActions: ['Als In-Transit markieren']
   },
   vendor_unknown: {
@@ -169,14 +197,14 @@ export const CLUSTER_CONFIG: Record<KanzleiCluster, {
   }
 };
 
-// KPI categories for Kanzlei
+/** KPI-Kategorisierung der Cluster für das Kanzlei-Dashboard. */
 export const KPI_CATEGORIES = {
   autoOk: ['fees', 'timing', 'refund_reversal'] as KanzleiCluster[],
   autoRequest: ['missing', 'many_to_one'] as KanzleiCluster[],
   needsHuman: ['duplicate_risk', 'amount_variance', 'vendor_unknown', 'tax_risk', 'anomaly', 'one_to_many'] as KanzleiCluster[]
 };
 
-// Risk score base values per cluster
+/** Basis-Risikopunkte pro Cluster für die UI-Risikosortierung. */
 export const RISK_BASE_SCORES: Record<KanzleiCluster, number> = {
   tax_risk: 80,
   duplicate_risk: 70,
@@ -191,7 +219,10 @@ export const RISK_BASE_SCORES: Record<KanzleiCluster, number> = {
   refund_reversal: 10
 };
 
-// Package configuration for Mandant
+// =====================================================================
+// Mandant-Paket-Konfiguration (UI-Labels und CTAs)
+// =====================================================================
+
 export const PACKAGE_CONFIG: Record<string, {
   title: string;
   description: string;
@@ -239,19 +270,11 @@ export const PACKAGE_CONFIG: Record<string, {
   }
 };
 
-// =====================
-// SFA (Kanzlei) Types
-// =====================
+// =====================================================================
+// SFA (Steuerfachangestellte) – UI-Konfiguration und Kanzlei-Typen
+// =====================================================================
 
-// SFA Queue IDs
-export type SfaQueueId = 
-  | 'missing_receipts'
-  | 'clarify_matching'
-  | 'tax_risks'
-  | 'duplicates_corrections'
-  | 'fees_misc';
-
-// SFA Queue Configuration
+/** Queue-Konfiguration mit Anzeige-Labels für die SFA-Workbench. */
 export const SFA_QUEUE_CONFIG: Record<SfaQueueId, {
   label: string;
   description: string;
@@ -278,22 +301,12 @@ export const SFA_QUEUE_CONFIG: Record<SfaQueueId, {
   },
 };
 
-// Trigger reasons for SFA cases (same labels as Mandant for consistency)
-export type SfaTriggerReason = 'ambiguous' | 'amount_deviation' | 'date_deviation' | 'fee_uncertain';
-
 export const SFA_TRIGGER_LABELS: Record<SfaTriggerReason, string> = {
   ambiguous: 'Mehrdeutig',
   amount_deviation: 'Betrag weicht ab',
   date_deviation: 'Datum weicht ab',
   fee_uncertain: 'Gebühr unsicher',
 };
-
-// Mandant status as seen by SFA
-export type SfaMandantStatus = 
-  | 'handed_over'        // An Kanzlei übergeben
-  | 'rejected_match'     // Zuordnung abgelehnt
-  | 'uploaded_receipt'   // Beleg hochgeladen
-  | 'marked_private';    // Privat markiert
 
 export const SFA_MANDANT_STATUS_LABELS: Record<SfaMandantStatus, string> = {
   handed_over: 'An Kanzlei übergeben',
@@ -302,27 +315,23 @@ export const SFA_MANDANT_STATUS_LABELS: Record<SfaMandantStatus, string> = {
   marked_private: 'Privat markiert',
 };
 
-// Case status for SFA workflow
-export type SfaCaseStatus = 'open' | 'waiting_mandant' | 'done';
-
 export const SFA_CASE_STATUS_LABELS: Record<SfaCaseStatus, string> = {
   open: 'Offen',
   waiting_mandant: 'Wartet auf Mandant',
   done: 'Erledigt',
 };
 
-// Payment method type
 export type PaymentMethod = 'Bank' | 'Card' | 'PayPal' | 'Stripe' | 'Amazon';
 
-// Audit trail entry
+/** Audit-Trail-Eintrag (für SfaCase und InquiryPackage). */
 export interface AuditEntry {
-  at: string;  // ISO timestamp
+  at: string;
   actor: 'mandant' | 'sfa';
   action: string;
   note?: string;
 }
 
-// Receipt/Document attached to a case
+/** Anhängender Beleg/Scan an einem SFA-Fall. */
 export interface SfaReceipt {
   id: string;
   fileName: string;
@@ -330,33 +339,25 @@ export interface SfaReceipt {
   amount: number;
 }
 
-// Main SFA Case interface
+/** SFA-Fall – ein einzelner Klärungsfall in der Kanzlei-Workbench. */
 export interface SfaCase {
   id: string;
   date: string;
   amount: number;
   direction: 'in' | 'out';
   counterparty: string;
-  purpose: string;  // Realistic bank text via purposeGenerator
+  purpose: string;
   paymentMethod: PaymentMethod;
-  
-  // Status
   mandantStatus: SfaMandantStatus;
   caseStatus: SfaCaseStatus;
-  waitingSince?: string;  // ISO timestamp when waiting started
-  
-  // Matching
+  waitingSince?: string;
   confidence?: number;
   triggerReasons: SfaTriggerReason[];
-  
-  // Attached receipt (if any)
   receipt?: SfaReceipt | null;
-  
-  // Audit Trail
   auditTrail: AuditEntry[];
 }
 
-// Inquiry package item (Rückfragenpaket)
+/** Einzelner Punkt im Rückfragenpaket der SFA an den Mandanten. */
 export interface InquiryPackageItem {
   caseId: string;
   questionText: string;

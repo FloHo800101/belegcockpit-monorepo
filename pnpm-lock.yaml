@@ -10,6 +10,9 @@ importers:
 
   backend:
     dependencies:
+      '@beleg-cockpit/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
       '@supabase/supabase-js':
         specifier: ^2.49.0
         version: 2.96.0
@@ -41,6 +44,9 @@ importers:
 
   frontend:
     dependencies:
+      '@beleg-cockpit/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
       '@hookform/resolvers':
         specifier: ^3.10.0
         version: 3.10.0(react-hook-form@7.71.1(react@18.3.1))
@@ -240,6 +246,8 @@ importers:
       vite:
         specifier: ^5.4.19
         version: 5.4.21(@types/node@22.19.11)
+
+  packages/shared: {}
 
 packages:
 

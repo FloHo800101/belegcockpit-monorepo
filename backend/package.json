@@ -30,6 +30,7 @@
     "matching:mass_all:offline:dataset": "tsx tests-backend/matching/mass_all/run-offline.ts"
   },
   "dependencies": {
+    "@beleg-cockpit/shared": "workspace:*",
     "@supabase/supabase-js": "^2.49.0",
     "dotenv": "^16.4.5",
     "mime-types": "^2.1.35"
