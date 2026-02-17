@@ -1,0 +1,164 @@
+{
+  "meta": {
+    "name": "tx_lifecycle_smoke",
+    "schemaVersion": 1,
+    "nowISO": "2026-01-20T00:00:00.000Z",
+    "tenant_id": "t_tx"
+  },
+  "docs": [],
+  "txs": [
+    {
+      "id": "tx-tech",
+      "tenant_id": "t_tx",
+      "amount": 1.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-18T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Verification charge",
+      "counterpartyName": "Test Bank"
+    },
+    {
+      "id": "tx-private",
+      "tenant_id": "t_tx",
+      "amount": 45.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-17T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Personal",
+      "counterpartyName": "Local Shop",
+      "privateHint": true
+    },
+    {
+      "id": "tx-fee",
+      "tenant_id": "t_tx",
+      "amount": 5.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-16T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Kontofuehrung Gebuehr",
+      "counterpartyName": "Bank Fees"
+    },
+    {
+      "id": "tx-sub",
+      "tenant_id": "t_tx",
+      "amount": 12.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-15T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Subscription Plan",
+      "counterpartyName": "Streaming Co",
+      "isRecurringHint": true
+    },
+    {
+      "id": "tx-prepay",
+      "tenant_id": "t_tx",
+      "amount": 250.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-14T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Vorkasse Anzahlung",
+      "counterpartyName": "Supplier GmbH"
+    },
+    {
+      "id": "tx-eigen",
+      "tenant_id": "t_tx",
+      "amount": 25.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-13T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Kartenzahlung POS",
+      "counterpartyName": "",
+      "iban": null
+    },
+    {
+      "id": "tx-missing",
+      "tenant_id": "t_tx",
+      "amount": 180.0,
+      "direction": "out",
+      "currency": "EUR",
+      "bookingDate": "2026-01-12T00:00:00.000Z",
+      "link_state": "unlinked",
+      "reference": "Invoice missing",
+      "counterpartyName": "Vendor XYZ"
+    }
+  ],
+  "cases": [
+    {
+      "id": "T001",
+      "description": "Technical tx",
+      "tx_id": "tx-tech",
+      "expected_kind": "technical_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["TECHNICAL_KEYWORD_MATCH"]
+    },
+    {
+      "id": "T002",
+      "description": "Private tx",
+      "tx_id": "tx-private",
+      "expected_kind": "private_tx",
+      "expected_severity": "info",
+      "expected_next_action": "ask_user",
+      "expected_explanation_codes": ["PRIVATE_HINT"]
+    },
+    {
+      "id": "T003",
+      "description": "Fee tx",
+      "tx_id": "tx-fee",
+      "expected_kind": "fee_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["FEE_KEYWORD_MATCH", "FEE_AMOUNT_SMALL"]
+    },
+    {
+      "id": "T004",
+      "description": "Subscription tx",
+      "tx_id": "tx-sub",
+      "expected_kind": "subscription_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["SUBSCRIPTION_RECURRING_HINT"]
+    },
+    {
+      "id": "T005",
+      "description": "Prepayment tx",
+      "tx_id": "tx-prepay",
+      "expected_kind": "prepayment_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["PREPAYMENT_KEYWORD_MATCH"],
+      "expected_rematch_anchor": "2026-01-14T00:00:00.000Z"
+    },
+    {
+      "id": "T006",
+      "description": "Needs eigenbeleg",
+      "tx_id": "tx-eigen",
+      "expected_kind": "needs_eigenbeleg",
+      "expected_severity": "action",
+      "expected_next_action": "start_eigenbeleg_flow",
+      "expected_explanation_codes": [
+        "EIGENBELEG_HEURISTIC",
+        "EIGENBELEG_KEYWORD_MATCH",
+        "EIGENBELEG_AMOUNT_SMALL",
+        "EIGENBELEG_UNKNOWN_COUNTERPARTY"
+      ],
+      "expected_rematch_anchor": "2026-01-13T00:00:00.000Z"
+    },
+    {
+      "id": "T007",
+      "description": "Missing doc",
+      "tx_id": "tx-missing",
+      "expected_kind": "missing_doc",
+      "expected_severity": "action",
+      "expected_next_action": "inbox_task",
+      "expected_explanation_codes": ["FALLBACK_MISSING_DOC"],
+      "expected_rematch_anchor": "2026-01-12T00:00:00.000Z"
+    }
+  ]
+}

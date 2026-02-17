@@ -1,0 +1,46 @@
+{
+  "name": "belegcockpit",
+  "private": true,
+  "packageManager": "pnpm@10.26.1",
+  "scripts": {
+    "test:manual:setup": "tsx tests-backend/integration/manual-test-setup.ts",
+    "test:manual:cleanup": "tsx tests-backend/integration/manual-test-cleanup.ts",
+    "upload:documents": "tsx scripts/upload-documents.ts",
+    "test": "pnpm test:integration",
+    "test:integration": "vitest run tests-backend/integration",
+    "test:xml-parser": "deno run -A tests-backend/integration/xml-parser-cases.ts",
+    "test:pdf-embedded-xml": "deno run -A tests-backend/integration/pdf-embedded-xml-cases.ts",
+    "test:azure-analyze": "deno run -A tests-backend/integration/azure-analyze-cases.ts",
+    "test:azure-mappers": "deno run -A tests-backend/integration/azure-mappers-cases.ts",
+    "test:backfill-extractions": "deno run -A tests-backend/integration/backfill-extractions-from-analyze.ts",
+    "test:backfill-bank-transactions": "tsx tests-backend/integration/backfill-bank-transactions.ts",
+    "test:backfill-invoices": "tsx tests-backend/integration/backfill-invoices.ts",
+    "cleanup:bank-transactions": "tsx tests-backend/matching/cleanup-bank-transactions.ts",
+    "cleanup:invoices": "tsx tests-backend/matching/cleanup-invoices.ts",
+    "cleanup:matching-all": "tsx tests-backend/matching/cleanup-matching-all.ts",
+    "matching:live-replay": "tsx tests-backend/matching/live-replay.ts",
+    "matching:cleanup-run": "tsx tests-backend/matching/cleanup-run.ts",
+    "matching:mass_tx2doc:offline": "tsx tests-backend/matching/mass_tx2doc/run-offline.ts --dataset tests-backend/matching/mass_tx2doc/datasets/smoke.json --out tests-backend/matching/mass_tx2doc/out/latest",
+    "matching:mass_tx2doc:offline:dataset": "tsx tests-backend/matching/mass_tx2doc/run-offline.ts",
+    "matching:mass_doc:offline": "tsx tests-backend/matching/mass_doc/run-offline.ts --dataset tests-backend/matching/mass_doc/datasets/doc_lifecycle_smoke.json --out tests-backend/matching/mass_doc/out/latest",
+    "matching:mass_doc:offline:dataset": "tsx tests-backend/matching/mass_doc/run-offline.ts",
+    "matching:mass_tx:offline": "tsx tests-backend/matching/mass_tx/run-offline.ts --dataset tests-backend/matching/mass_tx/datasets/tx_lifecycle_smoke.json --out tests-backend/matching/mass_tx/out/latest",
+    "matching:mass_tx:offline:dataset": "tsx tests-backend/matching/mass_tx/run-offline.ts",
+    "matching:mass_all:offline": "tsx tests-backend/matching/mass_all/run-offline.ts --dataset tests-backend/matching/mass_all/datasets/mass_all_smoke.json --out tests-backend/matching/mass_all/out/latest",
+    "matching:mass_all:offline:dataset": "tsx tests-backend/matching/mass_all/run-offline.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.0",
+    "dotenv": "^16.4.5",
+    "mime-types": "^2.1.35"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^22.19.3",
+    "supabase": "^2.67.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
+

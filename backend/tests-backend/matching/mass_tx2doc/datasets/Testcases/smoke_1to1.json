@@ -1,0 +1,437 @@
+{
+  "meta": {
+    "name": "smoke_1to1",
+    "tenant_id": "tenant_demo",
+    "schemaVersion": 1
+  },
+  "docs": [
+    {
+      "id": "doc-1",
+      "tenant_id": "tenant_demo",
+      "amount": 119.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-05T00:00:00.000Z",
+      "invoice_no": "INV-1001",
+      "vendor_raw": "Acme GmbH",
+      "vendor_norm": "acme gmbh",
+      "text_raw": "Acme GmbH Rechnung INV-1001",
+      "text_norm": "acme gmbh rechnung inv 1001"
+    },
+    {
+      "id": "doc-2",
+      "tenant_id": "tenant_demo",
+      "amount": 240.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-06T00:00:00.000Z",
+      "invoice_no": "INV-1002",
+      "e2e_id": "E2E-2002",
+      "vendor_raw": "Beta Industrie AG",
+      "vendor_norm": "beta industrie ag",
+      "text_raw": "Beta Industrie AG INV-1002",
+      "text_norm": "beta industrie ag inv 1002"
+    },
+    {
+      "id": "doc-3",
+      "tenant_id": "tenant_demo",
+      "amount": 89.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-04T00:00:00.000Z",
+      "vendor_raw": "Gamma Services GmbH",
+      "vendor_norm": "gamma services gmbh",
+      "text_raw": "Gamma Services GmbH Monatsleistung",
+      "text_norm": "gamma services gmbh monatsleistung"
+    },
+    {
+      "id": "doc-4",
+      "tenant_id": "tenant_demo",
+      "amount": 310.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-09T00:00:00.000Z",
+      "invoice_no": "INV-1004",
+      "vendor_raw": "Delta Handel KG",
+      "vendor_norm": "delta handel kg",
+      "text_raw": "Delta Handel KG INV-1004",
+      "text_norm": "delta handel kg inv 1004"
+    },
+    {
+      "id": "doc-5",
+      "tenant_id": "tenant_demo",
+      "amount": 500.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-10T00:00:00.000Z",
+      "iban": "DE44500105175407324931",
+      "vendor_raw": "Epsilon Media GmbH",
+      "vendor_norm": "epsilon media gmbh",
+      "text_raw": "Epsilon Media Leistung",
+      "text_norm": "epsilon media leistung"
+    },
+    {
+      "id": "doc-6",
+      "tenant_id": "tenant_demo",
+      "amount": 150.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-06T00:00:00.000Z",
+      "invoice_no": "INV-1006",
+      "vendor_raw": "Zeta Logistics GmbH",
+      "vendor_norm": "zeta logistics gmbh",
+      "text_raw": "Zeta Logistics INV-1006",
+      "text_norm": "zeta logistics inv 1006"
+    },
+    {
+      "id": "doc-7",
+      "tenant_id": "tenant_demo",
+      "amount": 75.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-03T00:00:00.000Z",
+      "vendor_raw": "Theta Software GmbH",
+      "vendor_norm": "theta software gmbh",
+      "text_raw": "Theta Software Service",
+      "text_norm": "theta software service"
+    },
+    {
+      "id": "doc-8",
+      "tenant_id": "tenant_demo",
+      "amount": 200.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-07T00:00:00.000Z",
+      "invoice_no": "INV-1008",
+      "vendor_raw": "Iota Supplies GmbH",
+      "vendor_norm": "iota supplies gmbh",
+      "text_raw": "Iota Supplies INV-1008",
+      "text_norm": "iota supplies inv 1008"
+    },
+    {
+      "id": "doc-9",
+      "tenant_id": "tenant_demo",
+      "amount": 130.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-04T00:00:00.000Z",
+      "invoice_no": "INV-1009",
+      "vendor_raw": "Kappa Energie AG",
+      "vendor_norm": "kappa energie ag",
+      "text_raw": "Kappa Energie INV-1009",
+      "text_norm": "kappa energie inv 1009"
+    },
+    {
+      "id": "doc-10",
+      "tenant_id": "tenant_demo",
+      "amount": 130.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoice_date": "2026-01-04T00:00:00.000Z",
+      "invoice_no": "INV-1009",
+      "vendor_raw": "Kappa Energie AG",
+      "vendor_norm": "kappa energie ag",
+      "text_raw": "Kappa Energie INV-1009",
+      "text_norm": "kappa energie inv 1009"
+    }
+  ],
+  "txs": [
+    {
+      "id": "tx-1",
+      "tenant_id": "tenant_demo",
+      "amount": 119.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-07T00:00:00.000Z",
+      "link_state": "unlinked",
+      "ref": "INV-1001",
+      "vendor_raw": "Acme GmbH",
+      "vendor_norm": "acme gmbh",
+      "text_raw": "Überweisung INV-1001",
+      "text_norm": "berweisung inv 1001"
+    },
+    {
+      "id": "tx-2",
+      "tenant_id": "tenant_demo",
+      "amount": 240.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-08T00:00:00.000Z",
+      "link_state": "unlinked",
+      "e2e_id": "E2E-2002",
+      "vendor_raw": "Beta Industrie AG",
+      "vendor_norm": "beta industrie ag",
+      "text_raw": "Payment E2E-2002",
+      "text_norm": "payment e2e 2002"
+    },
+    {
+      "id": "tx-3",
+      "tenant_id": "tenant_demo",
+      "amount": 89.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-06T00:00:00.000Z",
+      "link_state": "unlinked",
+      "vendor_raw": "Gamma Services GmbH",
+      "vendor_norm": "gamma services gmbh",
+      "text_raw": "Gamma Services Zahlung",
+      "text_norm": "gamma services zahlung"
+    },
+    {
+      "id": "tx-4",
+      "tenant_id": "tenant_demo",
+      "amount": 310.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-11T00:00:00.000Z",
+      "link_state": "unlinked",
+      "ref": "INV-1004",
+      "vendor_raw": "DELTA HANDEL",
+      "vendor_norm": "delta handel",
+      "text_raw": "Überweisung inv-1004",
+      "text_norm": "berweisung inv 1004"
+    },
+    {
+      "id": "tx-5",
+      "tenant_id": "tenant_demo",
+      "amount": 500.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-12T00:00:00.000Z",
+      "link_state": "unlinked",
+      "iban": "DE44500105175407324931",
+      "vendor_raw": "Epsilon Media GmbH",
+      "vendor_norm": "epsilon media gmbh",
+      "text_raw": "Überweisung",
+      "text_norm": "berweisung"
+    },
+    {
+      "id": "tx-6",
+      "tenant_id": "tenant_demo",
+      "amount": 150.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-08T00:00:00.000Z",
+      "link_state": "unlinked",
+      "ref": "INV-1006",
+      "vendor_raw": "Zeta Logistics GmbH",
+      "vendor_norm": "zeta logistics gmbh",
+      "text_raw": "Teilzahlung INV-1006",
+      "text_norm": "teilzahlung inv 1006"
+    },
+    {
+      "id": "tx-7",
+      "tenant_id": "tenant_demo",
+      "amount": 75.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-05T00:00:00.000Z",
+      "link_state": "unlinked",
+      "vendor_raw": "Random Vendor",
+      "vendor_norm": "random vendor",
+      "text_raw": "Zahlung",
+      "text_norm": "zahlung"
+    },
+    {
+      "id": "tx-8",
+      "tenant_id": "tenant_demo",
+      "amount": 200.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-09T00:00:00.000Z",
+      "link_state": "unlinked",
+      "ref": "INV-1008",
+      "vendor_raw": "Iota Supplies GmbH",
+      "vendor_norm": "iota supplies gmbh",
+      "text_raw": "Überweisung INV-1008",
+      "text_norm": "berweisung inv 1008"
+    },
+    {
+      "id": "tx-9",
+      "tenant_id": "tenant_demo",
+      "amount": 200.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-09T00:00:00.000Z",
+      "link_state": "unlinked",
+      "ref": "INV-1008",
+      "vendor_raw": "Iota Supplies GmbH",
+      "vendor_norm": "iota supplies gmbh",
+      "text_raw": "Überweisung INV-1008",
+      "text_norm": "berweisung inv 1008"
+    },
+    {
+      "id": "tx-10",
+      "tenant_id": "tenant_demo",
+      "amount": 130.0,
+      "direction": "out",
+      "currency": "EUR",
+      "booking_date": "2026-01-06T00:00:00.000Z",
+      "link_state": "unlinked",
+      "ref": "INV-1009",
+      "vendor_raw": "Kappa Energie AG",
+      "vendor_norm": "kappa energie ag",
+      "text_raw": "Überweisung INV-1009",
+      "text_norm": "berweisung inv 1009"
+    }
+  ],
+  "cases": [
+    {
+      "id": "C001",
+      "description": "INVOICE_NO hard → final (no IBAN)",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-1"
+      ],
+      "tx_ids": [
+        "tx-1"
+      ],
+      "must_reason_codes": [
+        "HARD_INVOICE_NO"
+      ]
+    },
+    {
+      "id": "C002",
+      "description": "E2E hard → final (no IBAN)",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-2"
+      ],
+      "tx_ids": [
+        "tx-2"
+      ],
+      "must_reason_codes": [
+        "HARD_E2E_AMOUNT"
+      ]
+    },
+    {
+      "id": "C003",
+      "description": "AMOUNT_DATE_VENDOR hard → final",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-3"
+      ],
+      "tx_ids": [
+        "tx-3"
+      ],
+      "must_reason_codes": [
+        "HARD_AMOUNT_DATE_VENDOR"
+      ]
+    },
+    {
+      "id": "C004",
+      "description": "INVOICE_NO hard despite vendor noise",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-4"
+      ],
+      "tx_ids": [
+        "tx-4"
+      ],
+      "must_reason_codes": [
+        "HARD_INVOICE_NO"
+      ]
+    },
+    {
+      "id": "C005",
+      "description": "IBAN hard → final",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-5"
+      ],
+      "tx_ids": [
+        "tx-5"
+      ],
+      "must_reason_codes": [
+        "HARD_IBAN_AMOUNT"
+      ]
+    },
+    {
+      "id": "C006",
+      "description": "Blocker: partial keyword",
+      "expected_state": "SUGGESTED_MATCH",
+      "expected_relation_type": "none",
+      "doc_ids": [
+        "doc-6"
+      ],
+      "tx_ids": [
+        "tx-6"
+      ],
+      "must_reason_codes": []
+    },
+    {
+      "id": "C007",
+      "description": "No-match: weak vendor",
+      "expected_state": "SUGGESTED_MATCH",
+      "expected_relation_type": "none",
+      "doc_ids": [
+        "doc-7"
+      ],
+      "tx_ids": [
+        "tx-7"
+      ],
+      "must_reason_codes": []
+    },
+    {
+      "id": "C008",
+      "description": "Ambiguous: conflict demoted for competing tx",
+      "expected_state": "AMBIGUOUS",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-8"
+      ],
+      "tx_ids": [
+        "tx-9"
+      ],
+      "must_reason_codes": []
+    },
+    {
+      "id": "C009",
+      "description": "Ambiguous: conflict demoted for competing docs",
+      "expected_state": "AMBIGUOUS",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-9"
+      ],
+      "tx_ids": [
+        "tx-10"
+      ],
+      "must_reason_codes": []
+    },
+    {
+      "id": "C011",
+      "description": "Final match for doc-10 with tx-10",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-10"
+      ],
+      "tx_ids": [
+        "tx-10"
+      ],
+      "must_reason_codes": [
+        "HARD_INVOICE_NO"
+      ]
+    },
+    {
+      "id": "C010",
+      "description": "Final match for doc-8 with tx-8",
+      "expected_state": "FINAL_MATCH",
+      "expected_relation_type": "one_to_one",
+      "doc_ids": [
+        "doc-8"
+      ],
+      "tx_ids": [
+        "tx-8"
+      ],
+      "must_reason_codes": [
+        "HARD_INVOICE_NO"
+      ]
+    }
+  ]
+}

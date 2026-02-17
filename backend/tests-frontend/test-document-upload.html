@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>belegcockpit - Test Document Upload</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b1020;
+        --card: #111936;
+        --text: #e8ecff;
+        --muted: #a7b0d6;
+        --border: rgba(255, 255, 255, 0.12);
+        --accent: #7aa2ff;
+        --danger: #ff5c7a;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f5f7ff;
+          --card: #ffffff;
+          --text: #10142a;
+          --muted: #4b557e;
+          --border: rgba(15, 20, 42, 0.12);
+          --accent: #335dff;
+          --danger: #c11b35;
+        }
+      }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto,
+          Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: var(--bg);
+        color: var(--text);
+      }
+      .wrap {
+        max-width: 880px;
+        margin: 48px auto;
+        padding: 0 16px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 20px;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 8px 0;
+      }
+      p {
+        margin: 0 0 16px 0;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: var(--muted);
+        margin: 12px 0 6px;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        outline: none;
+      }
+      input[type="file"] {
+        width: 100%;
+      }
+      button {
+        margin-top: 14px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--accent);
+        color: white;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      pre {
+        margin-top: 14px;
+        padding: 12px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        overflow: auto;
+        background: rgba(0, 0, 0, 0.2);
+      }
+      .error {
+        color: var(--danger);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      @media (min-width: 860px) {
+        .row {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      .hint {
+        font-size: 12px;
+        color: var(--muted);
+        margin-top: 6px;
+      }
+      .mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="card">
+        <h1>Test Upload - Supabase "belegcockpit (test)"</h1>
+        <p>
+          Uploads a document to bucket <span class="mono">documents</span> and
+          creates a row in <span class="mono">public.documents</span> using the
+          Edge Function <span class="mono">test-document-upload</span>.
+        </p>
+
+        <div class="row">
+          <div>
+            <label for="functionUrl">Function URL</label>
+            <input
+              id="functionUrl"
+              type="text"
+              placeholder="https://<project-ref>.functions.supabase.co/test-document-upload"
+            />
+            <div class="hint">
+              Supabase Dashboard -> Edge Functions -> test-document-upload -> URL
+            </div>
+          </div>
+          <div>
+            <label for="token">x-test-upload-token (optional)</label>
+            <input
+              id="token"
+              type="password"
+              placeholder="if TEST_DOCUMENT_UPLOAD_TOKEN is set"
+            />
+            <div class="hint">
+              If the function has <span class="mono">TEST_DOCUMENT_UPLOAD_TOKEN</span>,
+              set it here.
+            </div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="tenantId">tenantId (UUID)</label>
+            <input id="tenantId" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+          </div>
+          <div>
+            <label for="uploadedBy">uploadedBy (UUID, optional)</label>
+            <input id="uploadedBy" type="text" placeholder="auth.users.id (optional)" />
+          </div>
+        </div>
+
+        <label for="file">File</label>
+        <input id="file" type="file" accept="application/pdf,image/png,image/jpeg" />
+
+        <button id="btn">Upload</button>
+        <pre id="out" class="mono"></pre>
+      </div>
+    </div>
+
+    <script>
+      const functionUrlEl = document.getElementById("functionUrl");
+      const tenantIdEl = document.getElementById("tenantId");
+      const uploadedByEl = document.getElementById("uploadedBy");
+      const fileEl = document.getElementById("file");
+      const tokenEl = document.getElementById("token");
+      const outEl = document.getElementById("out");
+      const btnEl = document.getElementById("btn");
+
+      function print(value, isError = false) {
+        outEl.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        outEl.classList.toggle("error", Boolean(isError));
+      }
+
+      btnEl.addEventListener("click", async () => {
+        const functionUrl = functionUrlEl.value.trim();
+        const tenantId = tenantIdEl.value.trim();
+        const uploadedBy = uploadedByEl.value.trim();
+        const file = fileEl.files?.[0];
+        const token = tokenEl.value;
+
+        if (!functionUrl) return print("Missing Function URL", true);
+        if (!tenantId) return print("Missing tenantId", true);
+        if (!file) return print("Missing file", true);
+
+        const form = new FormData();
+        form.append("tenantId", tenantId);
+        if (uploadedBy) form.append("uploadedBy", uploadedBy);
+        form.append("file", file, file.name);
+
+        btnEl.disabled = true;
+        print("Uploading...");
+        try {
+          const res = await fetch(functionUrl, {
+            method: "POST",
+            headers: token ? { "x-test-upload-token": token } : {},
+            body: form,
+          });
+          const data = await res.json().catch(() => null);
+          if (!res.ok) {
+            return print({ status: res.status, body: data }, true);
+          }
+          print(data);
+        } catch (e) {
+          print(String(e), true);
+        } finally {
+          btnEl.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

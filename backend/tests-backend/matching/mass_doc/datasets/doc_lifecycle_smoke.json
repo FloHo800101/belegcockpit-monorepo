@@ -1,0 +1,177 @@
+{
+  "meta": {
+    "name": "doc_lifecycle_smoke",
+    "schemaVersion": 1,
+    "nowISO": "2026-01-20T00:00:00.000Z",
+    "tenant_id": "t_doc"
+  },
+  "docs": [
+    {
+      "id": "d-dup",
+      "tenant_id": "t_doc",
+      "amount": 120.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-10T00:00:00.000Z",
+      "duplicateKey": "dup-1"
+    },
+    {
+      "id": "d-error",
+      "tenant_id": "t_doc",
+      "amount": 45.0,
+      "currency": "EUR",
+      "link_state": "unlinked"
+    },
+    {
+      "id": "d-private",
+      "tenant_id": "t_doc",
+      "amount": 90.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-08T00:00:00.000Z",
+      "privateHint": true
+    },
+    {
+      "id": "d-split",
+      "tenant_id": "t_doc",
+      "amount": 140.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-09T00:00:00.000Z",
+      "splitHint": true
+    },
+    {
+      "id": "d-due-await",
+      "tenant_id": "t_doc",
+      "amount": 200.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-05T00:00:00.000Z",
+      "dueDate": "2026-01-25T00:00:00.000Z"
+    },
+    {
+      "id": "d-due-over",
+      "tenant_id": "t_doc",
+      "amount": 210.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-02T00:00:00.000Z",
+      "dueDate": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "d-expect",
+      "tenant_id": "t_doc",
+      "amount": 75.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-12T00:00:00.000Z",
+      "docType": "invoice"
+    },
+    {
+      "id": "d-eigen",
+      "tenant_id": "t_doc",
+      "amount": 30.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-14T00:00:00.000Z",
+      "docType": "receipt"
+    },
+    {
+      "id": "d-fallback",
+      "tenant_id": "t_doc",
+      "amount": 60.0,
+      "currency": "EUR",
+      "link_state": "unlinked",
+      "invoiceDate": "2026-01-16T00:00:00.000Z",
+      "docType": "unknown"
+    }
+  ],
+  "txs": [],
+  "cases": [
+    {
+      "id": "D001",
+      "description": "Duplicate doc",
+      "doc_id": "d-dup",
+      "expected_kind": "doc_duplicate",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["DUPLICATE"]
+    },
+    {
+      "id": "D002",
+      "description": "Missing required fields",
+      "doc_id": "d-error",
+      "expected_kind": "doc_error",
+      "expected_severity": "action",
+      "expected_next_action": "reupload_request",
+      "expected_explanation_codes": ["MISSING_FIELDS"]
+    },
+    {
+      "id": "D003",
+      "description": "Private doc",
+      "doc_id": "d-private",
+      "expected_kind": "private",
+      "expected_severity": "info",
+      "expected_next_action": "ask_user",
+      "expected_explanation_codes": ["PRIVATE_HINT"]
+    },
+    {
+      "id": "D004",
+      "description": "Split required",
+      "doc_id": "d-split",
+      "expected_kind": "split_required",
+      "expected_severity": "action",
+      "expected_next_action": "start_split_ui",
+      "expected_explanation_codes": ["SPLIT_HINT"]
+    },
+    {
+      "id": "D005",
+      "description": "Awaiting with due date",
+      "doc_id": "d-due-await",
+      "expected_kind": "awaiting_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["HAS_DUE_DATE", "NOT_OVERDUE"],
+      "expected_rematch_anchor": "2026-01-25T00:00:00.000Z"
+    },
+    {
+      "id": "D006",
+      "description": "Overdue",
+      "doc_id": "d-due-over",
+      "expected_kind": "overdue",
+      "expected_severity": "warning",
+      "expected_next_action": "inbox_task",
+      "expected_explanation_codes": ["HAS_DUE_DATE", "OVERDUE"],
+      "expected_rematch_anchor": "2026-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "D007",
+      "description": "Expects payment without due date",
+      "doc_id": "d-expect",
+      "expected_kind": "awaiting_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["EXPECTS_PAYMENT", "NO_DUE_DATE"],
+      "expected_rematch_anchor": "2026-01-12T00:00:00.000Z"
+    },
+    {
+      "id": "D008",
+      "description": "Eigenbeleg candidate",
+      "doc_id": "d-eigen",
+      "expected_kind": "eigenbeleg",
+      "expected_severity": "action",
+      "expected_next_action": "start_eigenbeleg_flow",
+      "expected_explanation_codes": ["EIGENBELEG_CANDIDATE"]
+    },
+    {
+      "id": "D009",
+      "description": "Fallback awaiting",
+      "doc_id": "d-fallback",
+      "expected_kind": "awaiting_tx",
+      "expected_severity": "info",
+      "expected_next_action": "none",
+      "expected_explanation_codes": ["FALLBACK_AWAITING"],
+      "expected_rematch_anchor": "2026-01-16T00:00:00.000Z"
+    }
+  ]
+}

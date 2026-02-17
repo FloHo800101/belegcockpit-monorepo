@@ -1,0 +1,2 @@
+# This function is called server-to-server and protected by PROCESS_DOCUMENT_TOKEN.
+verify_jwt = false

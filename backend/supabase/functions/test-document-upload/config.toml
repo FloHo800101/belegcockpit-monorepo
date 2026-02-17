@@ -1,0 +1,3 @@
+# Disable JWT verification so this can be called from a simple static HTML page.
+# Protect it using `TEST_DOCUMENT_UPLOAD_TOKEN` (x-test-upload-token header).
+verify_jwt = false

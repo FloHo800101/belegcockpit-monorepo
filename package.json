@@ -1,0 +1,11 @@
+{
+  "name": "beleg-cockpit",
+  "private": true,
+  "packageManager": "pnpm@10.26.1",
+  "scripts": {
+    "dev:frontend": "pnpm --filter frontend dev",
+    "dev:backend": "pnpm --filter backend dev",
+    "build:frontend": "pnpm --filter frontend build",
+    "test:backend": "pnpm --filter backend test"
+  }
+}
