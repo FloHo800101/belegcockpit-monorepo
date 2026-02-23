@@ -120,6 +120,31 @@ Frontend: zeigt ApiTxView[] an
 
 ---
 
+## Steuerlich relevante Sonderfälle
+
+### Phase 0 – Explizit ausgeschlossen
+
+Diese Fälle werden in Phase 0 **nicht** abgedeckt. Die Engine markiert sie ggf. als `tax_risk`-Cluster, aber keine spezifische Verarbeitungslogik.
+
+| Sonderfall | Warum komplex | Geplant für |
+|---|---|---|
+| **Reverse Charge** (§ 13b UStG) | Leistungsempfänger schuldet USt – kein USt-Ausweis auf Eingangsrechnung, aber Vorsteuer trotzdem abziehbar. Matching muss Auslandslieferant + Leistungsart erkennen. | Phase 1 |
+| **Bewirtungsbelege** (§ 4 Abs. 5 Nr. 2 EStG) | Nur 70 % abziehbar; Pflichtangaben auf Bewirtungsbeleg (Anlass, Teilnehmer) fehlen oft im PDF. Extraktion und Validierung dieser Felder nötig. | Phase 1 |
+| **Dauerschuldverhältnisse ohne Rechnung** (Miete, Leasing) | Regelmäßige Zahlung ohne zugehöriges Dokument ist steuerlich legitim – aber das Matching-System würde sie fälschlicherweise als `missing_receipt` klassifizieren. | Phase 1 |
+| **Anzahlungen / Abschlagsrechnungen** | 1 Tx entspricht einer Teilrechnung; finale Rechnung folgt später. Cross-period, partielle Beträge, Zuordnung komplex. | Phase 1 |
+| **Innergemeinschaftlicher Erwerb** (§ 1a UStG) | Ähnlich Reverse Charge, aber für Warenbezug aus EU. Erfordert USt-IdNr.-Prüfung. | Phase 2 |
+| **Gutschriften / Storno** (kreditorisch) | Negative Rechnungen; Matching gegen ursprüngliche Rechnung + ggf. Teilgutschrift. | Phase 1 |
+
+### Phase 0 – Behandlung im System
+
+Alle oben genannten Fälle, die trotzdem als Transaktion auftauchen:
+- Werden vom Matching-Engine ggf. als `tax_risk` oder `anomaly` klassifiziert
+- Erhalten `NextAction: "ask_user"` oder `"inbox_task"`
+- Landen in der **Mandanten-Review-Queue** (`mandantPackageKey: "review"`)
+- Die SFA kann in Phase 1 gezielt darauf reagieren
+
+---
+
 ## Wichtige Links
 
 - **Repo:** https://github.com/FloHo800101/belegcockpit-monorepo
