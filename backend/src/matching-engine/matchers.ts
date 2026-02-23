@@ -11,21 +11,32 @@ import {
 import { MatchingConfig, amountCompatible } from "./config";
 import { matchInvoiceNoInText, normalizeText } from "./normalize";
 import { canonCompact } from "./ids";
+import { resolveDocAmountMatch } from "./amount-candidates";
+import { vendorCompatible } from "./vendor";
+import { docPartyNormForTx, docPartyNorms } from "./doc-party";
+import { txAmountForCurrency, txSupportsCurrency } from "./tx-amounts";
 
 const HARD_IBAN = "HARD_IBAN_AMOUNT";
 const HARD_INVOICE_NO = "HARD_INVOICE_NO";
 const HARD_E2E = "HARD_E2E_AMOUNT";
 const SOFT_AMOUNT_DATE = "SOFT_AMOUNT_DATE";
+const SOFT_AMOUNT_VENDOR_OUT_OF_WINDOW = "SOFT_AMOUNT_VENDOR_OUT_OF_WINDOW";
+const SOFT_INVOICE_NO_AMOUNT_OUT_OF_WINDOW = "SOFT_INVOICE_NO_AMOUNT_OUT_OF_WINDOW";
+const LINE_ITEM_NET_MATCH = "LINE_ITEM_NET_MATCH";
 
 export function matchOneToOne(
   rel: Extract<Relation, { kind: "one_to_one" }>,
   cfg: MatchingConfig
 ): MatchDecision[] {
   const { tx, doc } = rel;
-  const hard = hardKey(doc.doc, tx, doc, cfg);
+  const txAmount = txAmountForCurrency(tx, doc.doc.currency);
+  if (txAmount == null) return [];
+  const amountMatch = resolveDocAmountMatch(doc.doc, txAmount, cfg);
+  const hard = hardKey(doc.doc, tx, doc, cfg, amountMatch, txAmount);
 
-  if (hard && !doc.features.partial_keywords) {
+  if (hard && !doc.features.partial_keywords && amountMatch) {
     const reason = hard === "IBAN" ? HARD_IBAN : hard === "INVOICE_NO" ? HARD_INVOICE_NO : HARD_E2E;
+    const reasons = amountMatch.viaAmountCandidate ? [reason, LINE_ITEM_NET_MATCH] : [reason];
     return [
       buildDecision({
         state: "final",
@@ -33,17 +44,109 @@ export function matchOneToOne(
         tx_ids: [tx.id],
         doc_ids: [doc.doc.id],
         confidence: 1,
-        reason_codes: [reason],
-        inputs: buildInputs(doc.doc, tx, doc.features, hard),
+        reason_codes: reasons,
+        inputs: buildInputs(
+          doc.doc,
+          tx,
+          doc.features,
+          hard,
+          amountMatch.matchedAmount,
+          amountMatch.viaAmountCandidate,
+          txAmount
+        ),
       }),
     ];
   }
 
-  const amountOk = amountCompatible(Math.abs(doc.doc.amount), Math.abs(tx.amount), cfg);
+  const amountOk = Boolean(amountMatch);
   const dateOk = dateMatches(doc.doc, tx, cfg);
+  const vendorOk = vendorCompatible(docPartyNormForTx(doc.doc, tx), tx.vendor_norm);
+  const invoiceNoOk = Boolean(doc.features.invoice_no_equal);
+  const recurringLinkedDoc =
+    doc.doc.link_state === "linked" &&
+    isRecurringTx(tx) &&
+    amountOk &&
+    vendorOk;
+
+  if (recurringLinkedDoc) {
+    const reasons = ["SUBSCRIPTION_REUSE_LINKED_DOC"];
+    if (amountMatch?.viaAmountCandidate) reasons.push(LINE_ITEM_NET_MATCH);
+    return [
+      buildDecision({
+        state: "final",
+        relation_type: "one_to_one",
+        tx_ids: [tx.id],
+        doc_ids: [doc.doc.id],
+        confidence: 0.96,
+        reason_codes: reasons,
+        inputs: buildInputs(
+          doc.doc,
+          tx,
+          doc.features,
+          hard ?? undefined,
+          amountMatch?.matchedAmount,
+          amountMatch?.viaAmountCandidate ?? false,
+          txAmount
+        ),
+      }),
+    ];
+  }
+
+  if (amountMatch?.viaAmountCandidate && dateOk && vendorOk && !doc.features.partial_keywords) {
+    return [
+      buildDecision({
+        state: "final",
+        relation_type: "one_to_one",
+        tx_ids: [tx.id],
+        doc_ids: [doc.doc.id],
+        confidence: 0.98,
+        reason_codes: [LINE_ITEM_NET_MATCH],
+        inputs: buildInputs(
+          doc.doc,
+          tx,
+          doc.features,
+          hard ?? undefined,
+          amountMatch.matchedAmount,
+          true,
+          txAmount
+        ),
+      }),
+    ];
+  }
+
+  if (amountOk && invoiceNoOk && !dateOk && !doc.features.partial_keywords) {
+    const reasons = [SOFT_INVOICE_NO_AMOUNT_OUT_OF_WINDOW];
+    if (amountMatch?.viaAmountCandidate) reasons.push(LINE_ITEM_NET_MATCH);
+    return [
+      buildDecision({
+        state: "suggested",
+        relation_type: "one_to_one",
+        tx_ids: [tx.id],
+        doc_ids: [doc.doc.id],
+        confidence: 0.8,
+        reason_codes: reasons,
+        inputs: buildInputs(
+          doc.doc,
+          tx,
+          doc.features,
+          hard ?? undefined,
+          amountMatch?.matchedAmount,
+          amountMatch?.viaAmountCandidate ?? false,
+          txAmount
+        ),
+      }),
+    ];
+  }
 
   const score = scoreOneToOne(doc, tx, cfg);
   if (score >= cfg.scoring.minSuggestScore) {
+    const reasons =
+      amountOk && dateOk
+        ? [SOFT_AMOUNT_DATE]
+        : amountOk && vendorOk
+          ? [SOFT_AMOUNT_VENDOR_OUT_OF_WINDOW]
+          : ["SCORE_ONLY"];
+    if (amountMatch?.viaAmountCandidate) reasons.push(LINE_ITEM_NET_MATCH);
     return [
       buildDecision({
         state: "suggested",
@@ -51,8 +154,16 @@ export function matchOneToOne(
         tx_ids: [tx.id],
         doc_ids: [doc.doc.id],
         confidence: score,
-        reason_codes: [amountOk && dateOk ? SOFT_AMOUNT_DATE : "SCORE_ONLY"],
-        inputs: buildInputs(doc.doc, tx, doc.features, hard ?? undefined),
+        reason_codes: reasons,
+        inputs: buildInputs(
+          doc.doc,
+          tx,
+          doc.features,
+          hard ?? undefined,
+          amountMatch?.matchedAmount,
+          amountMatch?.viaAmountCandidate ?? false,
+          txAmount
+        ),
       }),
     ];
   }
@@ -64,7 +175,12 @@ export function matchManyToOne(
   rel: Extract<Relation, { kind: "many_to_one" }>,
   cfg: MatchingConfig
 ): MatchDecision[] {
-  const { tx, docs } = rel;
+  const { tx } = rel;
+  const targetCurrency = rel.docs[0]?.doc.currency;
+  if (!targetCurrency) return [];
+  const txAmount = txAmountForCurrency(tx, targetCurrency);
+  if (txAmount == null) return [];
+  const docs = rel.docs.filter((cand) => cand.doc.currency === targetCurrency);
   if (docs.length < 2) return [];
 
   if (docs.length > cfg.subsetSum.maxCandidates) {
@@ -81,7 +197,7 @@ export function matchManyToOne(
     ];
   }
 
-  const solutions = subsetSumDocsToAmount(docs, tx.amount, cfg);
+  const solutions = subsetSumDocsToAmount(docs, txAmount, cfg);
   if (solutions.length === 0) return [];
 
   if (solutions.length > 1) {
@@ -141,17 +257,28 @@ export function matchOneToMany(
   cfg: MatchingConfig
 ): MatchDecision[] {
   const { doc } = rel;
-  const txs = rel.txs.filter((tx) => tx.currency === doc.currency);
+  const txs = rel.txs.filter((tx) => txSupportsCurrency(tx, doc.currency));
   if (txs.length === 0) return [];
 
-  const sum = txs.reduce((acc, tx) => acc + tx.amount, 0);
+  const targetAmount = resolveDocTargetAmount(doc);
+  const txAmounts = txs
+    .map((tx) => txAmountForCurrency(tx, doc.currency))
+    .filter((amount): amount is number => amount != null);
+  if (txAmounts.length !== txs.length) return [];
+  const sum = txAmounts.reduce((acc, amount) => acc + amount, 0);
+  const amountMatch = amountCompatible(sum, targetAmount, cfg)
+    ? { matchedAmount: targetAmount, viaAmountCandidate: false }
+    : resolveDocAmountMatch(doc, sum, cfg);
   const docIds = [doc.id];
   const txIds = txs.map((tx) => tx.id);
   const groupId = groupIdFor({ tx_ids: txIds, doc_ids: docIds });
   const batchHint = txs.some((tx) => hasBatchKeyword(tx, cfg));
 
-  if (amountCompatible(sum, doc.amount, cfg)) {
+  if (amountMatch && amountCompatible(amountMatch.matchedAmount, targetAmount, cfg)) {
     const state: MatchState = batchHint ? "suggested" : "final";
+    const reasons = amountMatch.viaAmountCandidate
+      ? ["PARTIAL_PAYMENT_SUM", LINE_ITEM_NET_MATCH]
+      : ["PARTIAL_PAYMENT_SUM"];
     return [
       buildDecision({
         state,
@@ -159,15 +286,21 @@ export function matchOneToMany(
         tx_ids: txIds,
         doc_ids: docIds,
         confidence: state === "final" ? 1 : 0.7,
-        reason_codes: ["PARTIAL_PAYMENT_SUM"],
-        inputs: { sum, tx_count: txs.length },
+        reason_codes: reasons,
+        inputs: {
+          sum,
+          tx_count: txs.length,
+          target_amount: targetAmount,
+          matched_amount: amountMatch.matchedAmount,
+          matched_via_amount_candidate: amountMatch.viaAmountCandidate,
+        },
         match_group_id: groupId,
       }),
     ];
   }
 
-  if (sum < doc.amount) {
-    const open = doc.amount - sum;
+  if (sum < targetAmount) {
+    const open = targetAmount - sum;
     return [
       buildDecision({
         state: "partial",
@@ -176,7 +309,7 @@ export function matchOneToMany(
         doc_ids: docIds,
         confidence: 0.9,
         reason_codes: ["PARTIAL_PAYMENT_SUM"],
-        inputs: { sum, tx_count: txs.length },
+        inputs: { sum, tx_count: txs.length, target_amount: targetAmount },
         match_group_id: groupId,
         open_amount_after: open,
       }),
@@ -191,10 +324,17 @@ export function matchOneToMany(
       doc_ids: docIds,
       confidence: 0.5,
       reason_codes: ["AMBIGUOUS_MULTIPLE_SOLUTIONS"],
-      inputs: { sum, tx_count: txs.length },
+      inputs: { sum, tx_count: txs.length, target_amount: targetAmount },
       match_group_id: groupId,
     }),
   ];
+}
+
+function resolveDocTargetAmount(doc: Doc): number {
+  if (typeof doc.open_amount === "number" && Number.isFinite(doc.open_amount) && doc.open_amount > 0) {
+    return Math.abs(doc.open_amount);
+  }
+  return Math.abs(doc.amount);
 }
 
 export function matchManyToMany(
@@ -205,8 +345,20 @@ export function matchManyToMany(
   const docIds = rel.docs.map((doc) => doc.id);
   const groupId = groupIdFor({ tx_ids: txIds, doc_ids: docIds });
   const sumDocs = rel.docs.reduce((acc, doc) => acc + doc.amount, 0);
-  const sumTxs = rel.txs.reduce((acc, tx) => acc + tx.amount, 0);
-  const amountOk = amountCompatible(sumDocs, sumTxs, cfg);
+  const targetCurrency = rel.docs[0]?.currency ?? null;
+  const singleCurrencyDocs =
+    targetCurrency != null && rel.docs.every((doc) => doc.currency === targetCurrency);
+  const txAmounts =
+    singleCurrencyDocs && targetCurrency
+      ? rel.txs
+          .map((tx) => txAmountForCurrency(tx, targetCurrency))
+          .filter((amount): amount is number => amount != null)
+      : [];
+  const sumTxs = txAmounts.reduce((acc, amount) => acc + amount, 0);
+  const amountOk =
+    singleCurrencyDocs && txAmounts.length === rel.txs.length
+      ? amountCompatible(sumDocs, sumTxs, cfg)
+      : false;
   const vendorOk = sharedVendorNorm(rel.docs, rel.txs);
   const partialHints = hasPartialPaymentKeywords(rel.docs, rel.txs, cfg);
 
@@ -240,10 +392,12 @@ export function matchManyToMany(
 }
 
 export function scoreOneToOne(docCand: DocCandidate, tx: Tx, cfg: MatchingConfig): number {
+  const txAmount = txAmountForCurrency(tx, docCand.doc.currency);
+  if (txAmount == null) return 0;
   let score = 0;
-  if (amountCompatible(docCand.doc.amount, tx.amount, cfg)) score += 0.5;
+  if (resolveDocAmountMatch(docCand.doc, txAmount, cfg)) score += 0.5;
   if (docCand.features.days_delta <= cfg.dateWindowDays) score += 0.2;
-  if (docCand.doc.vendor_norm && tx.vendor_norm && docCand.doc.vendor_norm === tx.vendor_norm) {
+  if (vendorCompatible(docPartyNormForTx(docCand.doc, tx), tx.vendor_norm)) {
     score += 0.2;
   }
   if (docCand.features.iban_equal || docCand.features.invoice_no_equal || docCand.features.e2e_equal) {
@@ -356,11 +510,18 @@ function hardKey(
   doc: Doc,
   tx: Tx,
   docCand?: DocCandidate,
-  cfg?: MatchingConfig
+  cfg?: MatchingConfig,
+  amountMatch?: ReturnType<typeof resolveDocAmountMatch>,
+  txAmount?: number
 ): "IBAN" | "INVOICE_NO" | "E2E" | null {
-  if (cfg && !amountCompatible(Math.abs(doc.amount), Math.abs(tx.amount), cfg)) return null;
-  if (doc.currency !== tx.currency) return null;
-  if (!amountDirectionOk(doc, tx)) return null;
+  const resolvedTxAmount =
+    txAmount ?? txAmountForCurrency(tx, doc.currency) ?? null;
+  const resolvedAmountMatch =
+    cfg && resolvedTxAmount != null
+      ? amountMatch ?? resolveDocAmountMatch(doc, resolvedTxAmount, cfg)
+      : null;
+  if (cfg && !resolvedAmountMatch) return null;
+  if (!txSupportsCurrency(tx, doc.currency)) return null;
 
   if (docCand?.features.iban_equal) return "IBAN";
   if (docCand?.features.e2e_equal) return "E2E";
@@ -371,13 +532,17 @@ function hardKey(
   const dateOk = cfg ? dateMatches(doc, tx, cfg) : false;
 
   debugHardCheck(doc, tx, {
-    amount_ok: cfg ? amountCompatible(Math.abs(doc.amount), Math.abs(tx.amount), cfg) : null,
+    amount_ok: cfg ? Boolean(resolvedAmountMatch) : null,
+    matched_amount: resolvedAmountMatch?.matchedAmount ?? null,
+    matched_via_amount_candidate: resolvedAmountMatch?.viaAmountCandidate ?? false,
     direction_ok: amountDirectionOk(doc, tx),
     date_ok: dateOk,
     invoice_no_ok: invoiceNoMatch,
   });
 
   if (invoiceNoMatch && dateOk) return "INVOICE_NO";
+
+  if (!amountDirectionOk(doc, tx)) return null;
 
   if (doc.iban && tx.iban && canonCompact(doc.iban) === canonCompact(tx.iban)) return "IBAN";
   if (doc.e2e_id && tx.e2e_id && canonCompact(doc.e2e_id) === canonCompact(tx.e2e_id)) return "E2E";
@@ -406,12 +571,17 @@ function buildInputs(
   doc: Doc,
   tx: Tx,
   features: FeatureVector,
-  hardKeyName?: string
+  hardKeyName?: string,
+  matchedAmount?: number,
+  matchedViaAmountCandidate?: boolean,
+  txAmount?: number
 ) {
   return {
     hard_key: hardKeyName,
     doc_amount: doc.amount,
-    tx_amount: tx.amount,
+    matched_amount: matchedAmount ?? doc.amount,
+    matched_via_amount_candidate: matchedViaAmountCandidate ?? false,
+    tx_amount: txAmount ?? tx.amount,
     currency: doc.currency,
     amount_delta: features.amount_delta,
     days_delta: features.days_delta,
@@ -445,20 +615,40 @@ function containsAny(haystack: string, needles: readonly string[]) {
   return false;
 }
 
+function isRecurringTx(tx: Tx): boolean {
+  if (tx.is_recurring_hint === true || tx.isRecurringHint === true) return true;
+  const haystack = normalizeText(
+    [tx.text_norm, tx.ref, tx.vendor_norm].filter(Boolean).join(" ")
+  );
+  return containsAny(haystack, [
+    "abo",
+    "subscription",
+    "monthly",
+    "monat",
+    "membership",
+    "jahrlich",
+    "annual",
+  ]);
+}
+
 function sharedVendorNorm(docs: Doc[], txs: Tx[]): boolean {
-  const values = [
-    ...docs.map((doc) => doc.vendor_norm).filter(Boolean),
-    ...txs.map((tx) => tx.vendor_norm).filter(Boolean),
-  ] as string[];
-  if (values.length === 0) return false;
-  const first = values[0];
-  return values.every((value) => value === first);
+  if (docs.length === 0 || txs.length === 0) return false;
+  for (const tx of txs) {
+    if (!tx.vendor_norm) return false;
+    const matchesAnyDoc = docs.some((doc) =>
+      vendorCompatible(docPartyNormForTx(doc, tx), tx.vendor_norm)
+    );
+    if (!matchesAnyDoc) return false;
+  }
+  return true;
 }
 
 function hasPartialPaymentKeywords(docs: Doc[], txs: Tx[], cfg: MatchingConfig): boolean {
   const keywords = cfg.keywords?.partialPayment ?? ["teilzahlung", "rate", "anzahlung", "partial"];
   const haystack = [
-    ...docs.map((doc) => [doc.text_norm, doc.vendor_norm].filter(Boolean).join(" ")),
+    ...docs.map((doc) =>
+      [doc.text_norm, ...docPartyNorms(doc)].filter(Boolean).join(" ")
+    ),
     ...txs.map((tx) => [tx.text_norm, tx.ref, tx.vendor_norm].filter(Boolean).join(" ")),
   ]
     .filter(Boolean)

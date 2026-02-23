@@ -3,6 +3,8 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { processDocument } from "../_shared/processor.ts";
+import { buildInvoiceAmountCandidates } from "../_shared/invoice-amount-candidates.ts";
+import { buildInvoiceLineItemRows } from "../_shared/invoice-line-items.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -159,7 +161,7 @@ function deriveDocumentType(
 }
 
 async function upsertInvoice(params: {
-  supabase: ReturnType<typeof createClient>;
+  supabase: any;
   tenantId: string;
   documentId: string;
   parsed: {
@@ -172,8 +174,13 @@ async function upsertInvoice(params: {
     totalNet?: number | null;
     currency?: string | null;
     vendorName?: string | null;
+    buyerName?: string | null;
     iban?: string | null;
     endToEndId?: string | null;
+    lineItems?: Array<{
+      description?: string | null;
+      totalPrice?: number | null;
+    }> | null;
   };
   nowISO: string;
 }) {
@@ -190,8 +197,10 @@ async function upsertInvoice(params: {
   const dueDate = coerceDate(parsed.dueDate);
   const invoiceNo = normalizeString(parsed.invoiceNumber);
   const vendorName = normalizeString(parsed.vendorName);
+  const buyerName = normalizeString(parsed.buyerName);
   const iban = normalizeString(parsed.iban);
   const e2eId = normalizeString(parsed.endToEndId);
+  const amountCandidates = buildInvoiceAmountCandidates(parsed);
 
   const row = {
     id: documentId,
@@ -205,6 +214,8 @@ async function upsertInvoice(params: {
     iban,
     e2e_id: e2eId,
     vendor_name: vendorName,
+    buyer_name: buyerName,
+    amount_candidates: amountCandidates.length ? amountCandidates : null,
     open_amount: amount,
     created_at: nowISO,
     updated_at: nowISO,
@@ -216,13 +227,58 @@ async function upsertInvoice(params: {
   if (error) {
     throw new Error(`Failed to upsert invoices: ${error.message}`);
   }
+
+  const lineItemRows = buildInvoiceLineItemRows({
+    tenantId,
+    invoiceId: documentId,
+    documentId,
+    currency,
+    lineItems: parsed.lineItems,
+    nowISO,
+  });
+
+  const { error: deleteLineItemsError } = await supabase
+    .from("invoice_line_items")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .eq("invoice_id", documentId);
+  if (deleteLineItemsError) {
+    throw new Error(`Failed to replace invoice_line_items: ${deleteLineItemsError.message}`);
+  }
+
+  if (lineItemRows.length > 0) {
+    const { error: lineItemsError } = await supabase
+      .from("invoice_line_items")
+      .upsert(lineItemRows, { onConflict: "invoice_id,line_index" });
+    if (lineItemsError) {
+      throw new Error(`Failed to upsert invoice_line_items: ${lineItemsError.message}`);
+    }
+  }
 }
 
 async function upsertBankTransactions(params: {
-  supabase: ReturnType<typeof createClient>;
+  supabase: any;
   tenantId: string;
   documentId: string;
-  parsed: { documentType?: string; transactions?: Array<Record<string, unknown>>; iban?: string | null; currency?: string | null };
+  parsed: {
+    documentType?: string;
+    transactions?: Array<{
+      bookingDate?: string | null;
+      valueDate?: string | null;
+      amount?: number | string | null;
+      currency?: string | null;
+      foreignAmount?: number | string | null;
+      foreignCurrency?: string | null;
+      exchangeRate?: number | string | null;
+      description?: string | null;
+      counterpartyName?: string | null;
+      counterpartyIban?: string | null;
+      endToEndId?: string | null;
+      reference?: string | null;
+    }>;
+    iban?: string | null;
+    currency?: string | null;
+  };
   nowISO: string;
 }) {
   const { supabase, tenantId, documentId, parsed, nowISO } = params;
@@ -240,8 +296,12 @@ async function upsertBankTransactions(params: {
       if (!Number.isFinite(amount)) return null;
 
       const currency = normalizeString(tx.currency) || normalizeString(parsed.currency) || "EUR";
-      const reference =
-        normalizeString(tx.reference) || normalizeString(tx.description) || null;
+      const foreignAmountRaw = toNumber(tx.foreignAmount);
+      const foreignAmount = Number.isFinite(foreignAmountRaw) ? foreignAmountRaw : null;
+      const foreignCurrency = normalizeString(tx.foreignCurrency);
+      const exchangeRateRaw = toNumber(tx.exchangeRate);
+      const exchangeRate = Number.isFinite(exchangeRateRaw) ? exchangeRateRaw : null;
+      const reference = buildTransactionReference(tx);
       const counterpartyName = normalizeString(tx.counterpartyName);
       const counterpartyIban =
         normalizeString(tx.counterpartyIban) || normalizeString(parsed.iban) || null;
@@ -253,6 +313,9 @@ async function upsertBankTransactions(params: {
         source_index: index,
         amount,
         currency,
+        foreign_amount: foreignAmount,
+        foreign_currency: foreignCurrency,
+        exchange_rate: exchangeRate,
         value_date: valueDate,
         booking_date: bookingDate,
         iban: counterpartyIban,
@@ -263,9 +326,18 @@ async function upsertBankTransactions(params: {
         updated_at: nowISO,
       };
     })
-    .filter(Boolean);
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
 
   if (!rows.length) return;
+
+  const { error: deleteError } = await supabase
+    .from("bank_transactions")
+    .delete()
+    .eq("tenant_id", tenantId)
+    .eq("source_document_id", documentId);
+  if (deleteError) {
+    throw new Error(`Failed to replace bank_transactions: ${deleteError.message}`);
+  }
 
   const { error } = await supabase
     .from("bank_transactions")
@@ -290,6 +362,17 @@ function normalizeString(value: unknown): string | null {
   return trimmed ? trimmed : null;
 }
 
+function buildTransactionReference(tx: {
+  description?: string | null;
+  reference?: string | null;
+}): string | null {
+  const parts = [tx.description, tx.reference]
+    .map(normalizeString)
+    .filter((value): value is string => Boolean(value));
+  if (!parts.length) return null;
+  return parts.join("\n");
+}
+
 function toNumber(value: unknown): number {
   if (typeof value === "number") return value;
   if (typeof value === "string") {
@@ -299,3 +382,5 @@ function toNumber(value: unknown): number {
   }
   return Number.NaN;
 }
+
+

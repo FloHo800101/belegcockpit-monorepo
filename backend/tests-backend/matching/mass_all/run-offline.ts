@@ -71,6 +71,8 @@ async function main() {
     tenantId,
     runId,
     createdAtISO,
+    docs: dataset.docs,
+    txs: dataset.txs,
     decisions: pipeline.decisions,
     docLifecycle: pipeline.docLifecycle ?? [],
     txLifecycle: pipeline.txLifecycle ?? [],

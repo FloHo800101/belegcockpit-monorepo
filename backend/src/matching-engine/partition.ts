@@ -87,9 +87,9 @@ export function partitionByLinkState(
   };
 }
 
-// Matchable states: unlinked or suggested. linked/partial are handled elsewhere.
+// Matchable states: unlinked, suggested, partial. linked is excluded from rematching.
 function isMatchableLinkState(state: LinkState): boolean {
-  return state === "unlinked" || state === "suggested";
+  return state === "unlinked" || state === "suggested" || state === "partial";
 }
 
 // Missing/empty tenant_id is treated as a separate tenant to avoid mixing.

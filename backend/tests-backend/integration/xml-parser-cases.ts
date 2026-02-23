@@ -140,6 +140,7 @@ async function run() {
       originalFilename: fileName,
       mimeType: uploadMeta.contentType,
       fileSize: uploadMeta.size,
+      fileHash: uploadMeta.fileHash,
     });
     try {
       const xml = await downloadText(supabase, BUCKET, storagePath);

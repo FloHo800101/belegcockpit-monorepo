@@ -4,6 +4,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import { buildInvoiceAmountCandidates } from "../../supabase/functions/_shared/invoice-amount-candidates";
+import { buildInvoiceLineItemRows } from "../../supabase/functions/_shared/invoice-line-items";
 
 dotenv.config({ path: ".env.live.local" });
 dotenv.config();
@@ -33,8 +35,13 @@ type ParsedDocument = {
   totalNet?: number | null;
   currency?: string | null;
   vendorName?: string | null;
+  buyerName?: string | null;
   iban?: string | null;
   endToEndId?: string | null;
+  lineItems?: Array<{
+    description?: string | null;
+    totalPrice?: number | null;
+  }> | null;
 };
 
 async function main() {
@@ -98,14 +105,16 @@ async function main() {
       continue;
     }
 
-    const amount = parsed.totalGross ?? parsed.totalNet ?? null;
+    const amount = resolveInvoiceAmount(parsed);
     const currency = normalizeString(parsed.currency) ?? "EUR";
     const invoiceDate = coerceDate(parsed.invoiceDate);
     const dueDate = coerceDate(parsed.dueDate);
     const invoiceNo = normalizeString(parsed.invoiceNumber);
     const vendorName = normalizeString(parsed.vendorName);
+    const buyerName = normalizeString(parsed.buyerName);
     const iban = normalizeString(parsed.iban);
     const e2eId = normalizeString(parsed.endToEndId);
+    const amountCandidates = buildInvoiceAmountCandidates(parsed);
 
     const payload = {
       id: docId,
@@ -119,6 +128,8 @@ async function main() {
       iban,
       e2e_id: e2eId,
       vendor_name: vendorName,
+      buyer_name: buyerName,
+      amount_candidates: amountCandidates.length ? amountCandidates : null,
       open_amount: amount,
       created_at: nowISO,
       updated_at: nowISO,
@@ -131,6 +142,33 @@ async function main() {
       throw new Error(`Failed to upsert invoices: ${error.message}`);
     }
 
+    const lineItemRows = buildInvoiceLineItemRows({
+      tenantId,
+      invoiceId: docId,
+      documentId: docId,
+      currency,
+      lineItems: parsed.lineItems,
+      nowISO,
+    });
+
+    const { error: deleteLineItemsError } = await supabase
+      .from("invoice_line_items")
+      .delete()
+      .eq("tenant_id", tenantId)
+      .eq("invoice_id", docId);
+    if (deleteLineItemsError) {
+      throw new Error(`Failed to replace invoice_line_items: ${deleteLineItemsError.message}`);
+    }
+
+    if (lineItemRows.length > 0) {
+      const { error: lineItemsError } = await supabase
+        .from("invoice_line_items")
+        .upsert(lineItemRows, { onConflict: "invoice_id,line_index" });
+      if (lineItemsError) {
+        throw new Error(`Failed to upsert invoice_line_items: ${lineItemsError.message}`);
+      }
+    }
+
     inserted += 1;
     if (DEBUG) {
       console.log("[backfill-invoices] upserted", {
@@ -141,6 +179,32 @@ async function main() {
   }
 
   console.log(`Done. inserted=${inserted} skipped=${skipped}`);
+}
+
+function resolveInvoiceAmount(parsed: ParsedDocument): number | null {
+  const fromTotals = toFiniteNumber(parsed.totalGross) ?? toFiniteNumber(parsed.totalNet);
+  if (fromTotals != null) return fromTotals;
+
+  const lineItems = parsed.lineItems ?? [];
+  let sum = 0;
+  let hasValue = false;
+  for (const item of lineItems) {
+    const value = toFiniteNumber(item?.totalPrice);
+    if (value == null) continue;
+    sum += Math.abs(value);
+    hasValue = true;
+  }
+  if (!hasValue) return null;
+  return Math.round(sum * 100) / 100;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const normalized = Number(value.replace(/\s/g, "").replace(",", "."));
+    if (Number.isFinite(normalized)) return normalized;
+  }
+  return null;
 }
 
 async function loadTenantId(documentId: string): Promise<string | null> {
@@ -208,3 +272,5 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
+

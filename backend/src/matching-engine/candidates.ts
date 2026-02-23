@@ -2,13 +2,26 @@ import { Doc, Tx, DocCandidate, FeatureVector } from "./types";
 import { MatchingConfig, calcWindow, daysBetween } from "./config";
 import { matchInvoiceNoInText, normalizeText } from "./normalize";
 import { canonCompact, canonId } from "./ids";
+import { resolveDocAmountMatch } from "./amount-candidates";
+import { vendorCompatible } from "./vendor";
+import { docPartyNormForTx } from "./doc-party";
+import { txAmountForCurrency, txSupportsCurrency } from "./tx-amounts";
 
 const DEFAULT_KEYWORDS = {
   partialPayment: ["teilzahlung", "rate", "anzahlung", "partial"],
   batchPayment: ["sammel", "collective", "mehrere rechnungen", "batch"],
 };
 
-export function candidatesForTx(tx: Tx, docs: Doc[], cfg: MatchingConfig): DocCandidate[] {
+export type CandidateOptions = {
+  includeLinkedDocs?: boolean;
+};
+
+export function candidatesForTx(
+  tx: Tx,
+  docs: Doc[],
+  cfg: MatchingConfig,
+  options?: CandidateOptions
+): DocCandidate[] {
   if (!tx.currency) return [];
 
   const tenantKey = normalizeTenantId(tx.tenant_id);
@@ -16,12 +29,13 @@ export function candidatesForTx(tx: Tx, docs: Doc[], cfg: MatchingConfig): DocCa
 
   return docs
     .filter((doc) => normalizeTenantId(doc.tenant_id) === tenantKey)
-    .filter((doc) => isMatchableLinkState(doc.link_state))
-    .filter((doc) => Boolean(doc.currency) && doc.currency === tx.currency)
+    .filter((doc) => isMatchableDocLinkState(doc.link_state, options))
+    .filter((doc) => Boolean(doc.currency) && txSupportsCurrency(tx, doc.currency))
     .filter((doc) => {
       if (!bookingDateValid) return true;
       const window = calcWindow(doc, cfg);
-      return inDateWindow(tx.booking_date, window);
+      if (inDateWindow(tx.booking_date, window)) return true;
+      return isStrongOutOfWindowCandidate(doc, tx, cfg);
     })
     .map((doc) => ({
       doc,
@@ -38,15 +52,21 @@ export function candidatesForDoc(doc: Doc, txs: Tx[], cfg: MatchingConfig): Tx[]
   return txs
     .filter((tx) => normalizeTenantId(tx.tenant_id) === tenantKey)
     .filter((tx) => isMatchableLinkState(tx.link_state))
-    .filter((tx) => Boolean(tx.currency) && tx.currency === doc.currency)
+    .filter((tx) => Boolean(tx.currency) && txSupportsCurrency(tx, doc.currency))
     .filter((tx) => {
       if (!isValidISODate(tx.booking_date)) return true;
-      return inDateWindow(tx.booking_date, window);
+      if (inDateWindow(tx.booking_date, window)) return true;
+      return isStrongOutOfWindowCandidate(doc, tx, cfg);
     });
 }
 
 export function buildFeatureVector(doc: Doc, tx: Tx, cfg: MatchingConfig): FeatureVector {
-  const amountDelta = Math.abs(doc.amount - tx.amount);
+  const txAmount = txAmountForCurrency(tx, doc.currency);
+  const amountMatch =
+    txAmount == null ? null : resolveDocAmountMatch(doc, txAmount, cfg);
+  const matchedAmount = amountMatch?.matchedAmount ?? doc.amount;
+  const amountDelta =
+    txAmount == null ? Number.POSITIVE_INFINITY : Math.abs(matchedAmount - txAmount);
   const anchor = doc.invoice_date ?? doc.due_date ?? null;
   const daysDelta = anchor && isValidISODate(anchor) && isValidISODate(tx.booking_date)
     ? Math.abs(daysBetween(tx.booking_date, anchor))
@@ -63,7 +83,12 @@ export function buildFeatureVector(doc: Doc, tx: Tx, cfg: MatchingConfig): Featu
 }
 
 export function isMatchableLinkState(state: string): boolean {
-  return state === "unlinked" || state === "suggested";
+  return state === "unlinked" || state === "suggested" || state === "partial";
+}
+
+function isMatchableDocLinkState(state: string, options?: CandidateOptions): boolean {
+  if (isMatchableLinkState(state)) return true;
+  return Boolean(options?.includeLinkedDocs) && state === "linked";
 }
 
 export function inDateWindow(
@@ -131,6 +156,35 @@ function containsAny(haystack: string, needles: readonly string[]): boolean {
 
 function isValidISODate(s: string): boolean {
   return Number.isFinite(Date.parse(s));
+}
+
+function isStrongOutOfWindowCandidate(doc: Doc, tx: Tx, cfg: MatchingConfig): boolean {
+  const anchor = doc.invoice_date ?? doc.due_date ?? null;
+  if (!anchor || !isValidISODate(anchor) || !isValidISODate(tx.booking_date)) return false;
+
+  const daysDelta = Math.abs(daysBetween(tx.booking_date, anchor));
+  if (!Number.isFinite(daysDelta) || daysDelta <= cfg.dateWindowDays) return false;
+  const invoiceNoSignal = hasInvoiceNoSignal(doc, tx);
+  if (!invoiceNoSignal && !isDirectionCompatible(doc, tx)) return false;
+  const vendorSignal = vendorCompatible(docPartyNormForTx(doc, tx), tx.vendor_norm);
+  if (!vendorSignal && !invoiceNoSignal) return false;
+  const txAmount = txAmountForCurrency(tx, doc.currency);
+  if (txAmount == null) return false;
+  if (!resolveDocAmountMatch(doc, txAmount, cfg)) return false;
+
+  return true;
+}
+
+function hasInvoiceNoSignal(doc: Doc, tx: Tx): boolean {
+  if (!doc.invoice_no) return false;
+  const haystack = safeStr(tx.ref) || safeStr(tx.text_norm);
+  return matchInvoiceNoInText(doc.invoice_no, haystack);
+}
+
+function isDirectionCompatible(doc: Doc, tx: Tx): boolean {
+  if (doc.amount >= 0 && tx.direction !== "out") return false;
+  if (doc.amount < 0 && tx.direction !== "in") return false;
+  return true;
 }
 
 function normalizeTenantId(value: string | null | undefined): string {

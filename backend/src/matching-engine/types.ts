@@ -3,6 +3,17 @@ export type MatchState = "final" | "suggested" | "ambiguous" | "partial";
 export type MatchRelationType = "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many";
 export type Direction = "in" | "out";
 
+export interface DocLineItem {
+  id?: string;
+  line_index?: number | null;
+  description?: string | null;
+  amount_signed?: number | null;
+  amount_abs?: number | null;
+  currency?: string | null;
+  link_state?: LinkState;
+  open_amount?: number | null;
+}
+
 export interface Doc {
   id: string;
   tenant_id: string;
@@ -36,8 +47,12 @@ export interface Doc {
   e2e_id?: string | null;
   vendor_raw?: string | null;
   vendor_norm?: string | null;
+  buyer_raw?: string | null;
+  buyer_norm?: string | null;
   text_raw?: string | null;
   text_norm?: string | null;
+  amount_candidates?: number[] | null;
+  items?: DocLineItem[] | null;
   // Only used for partial/remaining matches (1:n); null/undefined when unknown.
   open_amount?: number | null;
 }
@@ -48,6 +63,9 @@ export interface Tx {
   amount: number;
   direction: Direction;
   currency: string;
+  foreign_amount?: number | null;
+  foreign_currency?: string | null;
+  exchange_rate?: number | null;
   booking_date: string;
   bookingDate?: string;
   value_date?: string;

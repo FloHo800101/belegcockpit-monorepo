@@ -9,5 +9,10 @@
     "types": ["node"],
     "skipLibCheck": true
   },
-  "include": ["src", "scripts", "tests-backend"]
+  "include": ["src", "scripts", "tests-backend"],
+  "exclude": [
+    "tests-backend/integration/_shared.storage-path.test.ts",
+    "tests-backend/integration/azure-bank-statement-fx.test.ts",
+    "tests-backend/integration/azure-invoice-date-fallback.test.ts"
+  ]
 }

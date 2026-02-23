@@ -27,6 +27,9 @@ type ParsedTransaction = {
   valueDate?: string | null;
   amount?: number | string | null;
   currency?: string | null;
+  foreignAmount?: number | string | null;
+  foreignCurrency?: string | null;
+  exchangeRate?: number | string | null;
   description?: string | null;
   counterpartyName?: string | null;
   counterpartyIban?: string | null;
@@ -101,6 +104,11 @@ async function main() {
 
         const currency =
           normalizeString(tx.currency) || normalizeString(parsed.currency) || "EUR";
+        const foreignAmountRaw = toNumber(tx.foreignAmount);
+        const foreignAmount = Number.isFinite(foreignAmountRaw) ? foreignAmountRaw : null;
+        const foreignCurrency = normalizeString(tx.foreignCurrency);
+        const exchangeRateRaw = toNumber(tx.exchangeRate);
+        const exchangeRate = Number.isFinite(exchangeRateRaw) ? exchangeRateRaw : null;
         const reference = buildReference(tx);
         const counterpartyName = normalizeString(tx.counterpartyName);
         const counterpartyIban =
@@ -113,6 +121,9 @@ async function main() {
           source_index: index,
           amount,
           currency,
+          foreign_amount: foreignAmount,
+          foreign_currency: foreignCurrency,
+          exchange_rate: exchangeRate,
           value_date: valueDate,
           booking_date: bookingDate,
           iban: counterpartyIban,
@@ -131,6 +142,15 @@ async function main() {
     if (!payload.length) {
       skipReasons.no_transactions += 1;
       continue;
+    }
+
+    const { error: deleteError } = await supabase
+      .from("bank_transactions")
+      .delete()
+      .eq("tenant_id", tenantId)
+      .eq("source_document_id", docId);
+    if (deleteError) {
+      throw new Error(`Failed to replace bank_transactions: ${deleteError.message}`);
     }
 
     const { error } = await supabase

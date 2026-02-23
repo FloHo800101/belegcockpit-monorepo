@@ -30,6 +30,16 @@ export type ApplyOp =
       link_state: LinkState;
     }
   | {
+      kind: "update_invoice_line_item";
+      tenant_id: string;
+      invoice_id: string;
+      line_item_id?: string | null;
+      line_index?: number | null;
+      link_state: LinkState;
+      open_amount: number;
+      match_group_id?: string | null;
+    }
+  | {
       kind: "upsert_group";
       tenant_id: string;
       match_group_id: string;
@@ -54,6 +64,18 @@ export type AuditRecord = {
   reason_codes: string[];
   inputs: Record<string, any>;
   matched_by: "system" | "user";
+};
+
+export type EdgeDocRef = {
+  tenant_id: string;
+  match_group_id: string;
+  doc_id: string;
+};
+
+export type EdgeTxRef = {
+  tenant_id: string;
+  match_group_id: string;
+  tx_id: string;
 };
 
 export function toApplyOps(decision: MatchDecision, nowISO?: string): ApplyOp[] {
@@ -179,11 +201,10 @@ export function toApplyOps(decision: MatchDecision, nowISO?: string): ApplyOp[] 
         doc_id,
         link_state,
       };
-      if (decision.state === "partial" && typeof decision.open_amount_after === "number") {
-        update.open_amount = decision.open_amount_after;
-      }
-      if (decision.state === "final" && decision.relation_type === "one_to_many") {
+      if (decision.state === "final") {
         update.open_amount = 0;
+      } else if (decision.state === "partial" && typeof decision.open_amount_after === "number") {
+        update.open_amount = decision.open_amount_after;
       }
       ops.push(update);
     }
@@ -194,6 +215,25 @@ export function toApplyOps(decision: MatchDecision, nowISO?: string): ApplyOp[] 
         tx_id,
         link_state,
       });
+    }
+
+    const matchedItemRefs = extractMatchedItemRefs(
+      decision.inputs?.matched_item_refs,
+      decision.inputs?.matched_item_ids
+    );
+    if (doc_ids.length === 1 && matchedItemRefs.length > 0) {
+      for (const ref of matchedItemRefs) {
+        ops.push({
+          kind: "update_invoice_line_item",
+          tenant_id,
+          invoice_id: doc_ids[0],
+          line_item_id: ref.id ?? null,
+          line_index: ref.line_index,
+          link_state: "linked",
+          open_amount: 0,
+          match_group_id,
+        });
+      }
     }
   }
 
@@ -219,6 +259,43 @@ export function toAuditRecord(decision: MatchDecision, nowISO?: string): AuditRe
     inputs: safeObj(decision.inputs),
     matched_by: decision.matched_by,
   };
+}
+
+export function projectUniqueEdgeRefs(ops: ApplyOp[]): {
+  docRefs: EdgeDocRef[];
+  txRefs: EdgeTxRef[];
+} {
+  const docSeen = new Set<string>();
+  const txSeen = new Set<string>();
+  const docRefs: EdgeDocRef[] = [];
+  const txRefs: EdgeTxRef[] = [];
+
+  for (const op of ops) {
+    if (op.kind !== "upsert_edge") continue;
+    if (!op.match_group_id) continue;
+
+    const docKey = `${op.match_group_id}|${op.doc_id}`;
+    if (!docSeen.has(docKey)) {
+      docSeen.add(docKey);
+      docRefs.push({
+        tenant_id: op.tenant_id,
+        match_group_id: op.match_group_id,
+        doc_id: op.doc_id,
+      });
+    }
+
+    const txKey = `${op.match_group_id}|${op.tx_id}`;
+    if (!txSeen.has(txKey)) {
+      txSeen.add(txKey);
+      txRefs.push({
+        tenant_id: op.tenant_id,
+        match_group_id: op.match_group_id,
+        tx_id: op.tx_id,
+      });
+    }
+  }
+
+  return { docRefs, txRefs };
 }
 
 export function decisionKey(decision: MatchDecision): string {
@@ -275,3 +352,52 @@ Testfälle
 - many_to_many ambiguous => group only, no edges
 - suggested => edges/group suggested only, no doc/tx updates
 */
+
+
+type ParsedMatchedItemRef = {
+  id?: string;
+  line_index: number | null;
+};
+
+function extractMatchedItemRefs(refsValue: unknown, idsValue: unknown): ParsedMatchedItemRef[] {
+  const out: ParsedMatchedItemRef[] = [];
+  const seen = new Set<string>();
+
+  const push = (item: ParsedMatchedItemRef) => {
+    const key = item.id ? `id:${item.id}` : `line:${item.line_index ?? -1}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(item);
+  };
+
+  if (Array.isArray(refsValue)) {
+    for (const value of refsValue) {
+      if (!value || typeof value !== "object") continue;
+      const entry = value as { id?: unknown; line_index?: unknown };
+      const id = typeof entry.id === "string" && entry.id.trim() ? entry.id.trim() : undefined;
+      const lineIndex =
+        typeof entry.line_index === "number" && Number.isFinite(entry.line_index)
+          ? entry.line_index
+          : null;
+      if (!id && lineIndex == null) continue;
+      push({ id, line_index: lineIndex });
+    }
+    return out;
+  }
+
+  if (Array.isArray(idsValue)) {
+    for (const value of idsValue) {
+      if (typeof value !== "string") continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("line:")) {
+        const parsed = Number.parseInt(trimmed.slice(5), 10);
+        push({ line_index: Number.isFinite(parsed) ? parsed : null });
+      } else {
+        push({ id: trimmed, line_index: null });
+      }
+    }
+  }
+
+  return out;
+}

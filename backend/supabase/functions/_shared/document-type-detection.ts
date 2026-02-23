@@ -31,13 +31,48 @@ function splitLines(text: string) {
   return text.split(/\r?\n/).map((line) => line.trim());
 }
 
-function parseGermanDateToIso(value: string): string | null {
-  const match = value.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+type DateParts = {
+  day: string;
+  month: string;
+  year: number | null;
+};
+
+function normalizeYearToken(value: string): number {
+  return value.length === 2 ? Number(`20${value}`) : Number(value);
+}
+
+function parseDateParts(value: string): DateParts | null {
+  const match = value.match(/(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?/);
   if (!match) return null;
   const day = match[1].padStart(2, "0");
   const month = match[2].padStart(2, "0");
-  const year = match[3].length === 2 ? `20${match[3]}` : match[3];
-  return `${year}-${month}-${day}`;
+  const year = match[3] ? normalizeYearToken(match[3]) : null;
+  if (!Number.isFinite(Number(day)) || !Number.isFinite(Number(month))) return null;
+  return { day, month, year };
+}
+
+function toIsoDate(parts: DateParts, fallbackYear?: number | null): string | null {
+  const year = parts.year ?? fallbackYear ?? null;
+  if (!year || !Number.isFinite(year)) return null;
+  const iso = `${String(year).padStart(4, "0")}-${parts.month}-${parts.day}`;
+  const date = new Date(`${iso}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  if (date.toISOString().slice(0, 10) !== iso) return null;
+  return iso;
+}
+
+function parseGermanDateToIso(value: string, fallbackYear?: number | null): string | null {
+  const parts = parseDateParts(value);
+  if (!parts) return null;
+  return toIsoDate(parts, fallbackYear);
+}
+
+function getYearFromIso(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  return Number.isFinite(year) ? year : null;
 }
 
 function countTransactionLines(lines: string[]) {
@@ -102,6 +137,31 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "buchung",
   ];
   const invoiceKeywords = ["rechnung", "invoice", "rechnungsnummer", "invoice no"];
+  const taxNoticeKeywords = [
+    "finanzamt",
+    "gewerbesteuer",
+    "umsatzsteuer",
+    "steuernummer",
+    "steuernr",
+    "steuer nr",
+    "vorauszahlung",
+    "vorauszahlungen",
+    "steuerbescheid",
+    "bescheid",
+    "festsetzung",
+  ];
+  const payrollKeywords = [
+    "entgeltabrechnung",
+    "gehaltsabrechnung",
+    "lohnabrechnung",
+    "lohnsteuer",
+    "sozialversicherung",
+    "arbeitnehmer",
+    "steuerklasse",
+    "personal-nr",
+    "gesamtbrutto",
+    "nettoentgelt",
+  ];
 
   const bankKeywordHit = bankKeywords.some((kw) => normalized.includes(kw));
   const bankTransactionLineCount = countTransactionLines(lines);
@@ -122,6 +182,17 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
   }
   if (bankHasIdentifiers) bankReasons.push("identifier:iban_bic");
 
+  const taxNoticeHitCount = taxNoticeKeywords.filter((kw) => normalized.includes(kw)).length;
+  const hasTaxNoticeHint = taxNoticeHitCount >= 2;
+  if (hasTaxNoticeHint) {
+    invoiceReasons.push("keyword:tax_notice");
+  }
+  const payrollHitCount = payrollKeywords.filter((kw) => normalized.includes(kw)).length;
+  const hasPayrollHint = payrollHitCount >= 2;
+  if (hasPayrollHint) {
+    invoiceReasons.push("keyword:payroll");
+  }
+
   const invoiceKeywordHit = invoiceKeywords.some((kw) => normalized.includes(kw));
   const invoiceTaxHit = /(netto|mwst|ust|vat|brutto|gesamtbetrag)/.test(normalized);
   const invoiceDateHit = /(rechnungsdatum|faelligkeitsdatum|falligkeitsdatum|leistungsdatum|lieferdatum)/.test(
@@ -133,6 +204,7 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
   if (invoiceKeywordHit) invoiceReasons.push("keyword:invoice");
   if (invoiceTaxHit) invoiceReasons.push("keyword:tax");
   if (invoiceDateHit) invoiceReasons.push("keyword:date");
+  if (hasTaxNoticeHint) invoiceTextScore += 0.25;
 
   let bankStructureScore = 0;
   const hasBalances =
@@ -200,9 +272,10 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
   ].filter(Boolean).length;
 
   const bankEligible =
-    bankCriteriaCount >= 2 ||
-    (bankCriteriaCount >= 1 && bankStructureScore >= 0.15) ||
-    hasKontoauszugKeyword;
+    !hasTaxNoticeHint &&
+    (bankCriteriaCount >= 2 ||
+      (bankCriteriaCount >= 1 && bankStructureScore >= 0.15) ||
+      hasKontoauszugKeyword);
   const invoiceEligible =
     invoiceCriteriaCount >= 2 || (invoiceCriteriaCount >= 1 && invoiceStructureScore >= 0.15);
 
@@ -219,6 +292,22 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
       documentType: "bank_statement",
       confidence: Math.max(bankScore, 0.8),
       reasons: bankReasons,
+    };
+  }
+
+  if (hasTaxNoticeHint && !hasKontoauszugKeyword) {
+    return {
+      documentType: "invoice",
+      confidence: Math.max(invoiceScore, 0.7),
+      reasons: [...new Set(invoiceReasons)],
+    };
+  }
+
+  if (hasPayrollHint && !hasKontoauszugKeyword) {
+    return {
+      documentType: "invoice",
+      confidence: Math.max(invoiceScore, 0.75),
+      reasons: [...new Set(invoiceReasons)],
     };
   }
 
@@ -249,12 +338,36 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
 }
 
 export function detectStatementPeriod(text: string) {
-  const match = text.match(
-    /(von|vom)\s+(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s+(bis|-\s*)\s+(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)/i
-  );
-  if (!match) return null;
-  const from = parseGermanDateToIso(match[2].replace(/\//g, "."));
-  const to = parseGermanDateToIso(match[4].replace(/\//g, "."));
+  const normalized = replaceUmlauts(text);
+  const patterns = [
+    /(?:von|vom)\s+(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s+(?:bis(?:\s+zum)?|-)\s+(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)/i,
+    /(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s*-\s*(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)/,
+  ];
+
+  let fromRaw: string | null = null;
+  let toRaw: string | null = null;
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (!match) continue;
+    fromRaw = match[1] ?? null;
+    toRaw = match[2] ?? null;
+    break;
+  }
+
+  if (!fromRaw || !toRaw) return null;
+
+  const fromParts = parseDateParts(fromRaw);
+  const toParts = parseDateParts(toRaw);
+  if (!fromParts || !toParts) return null;
+
+  const statementYear = getYearFromIso(detectStatementDate(text));
+  const currentYear = new Date().getUTCFullYear();
+  const fromYear = fromParts.year ?? toParts.year ?? statementYear ?? currentYear;
+  const toYear = toParts.year ?? fromParts.year ?? statementYear ?? currentYear;
+
+  const from = parseGermanDateToIso(fromRaw.replace(/\//g, "."), fromYear);
+  const to = parseGermanDateToIso(toRaw.replace(/\//g, "."), toYear);
   if (!from || !to) return null;
   return { from, to };
 }

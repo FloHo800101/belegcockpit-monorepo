@@ -15,6 +15,7 @@
     "test:backfill-extractions": "deno run -A tests-backend/integration/backfill-extractions-from-analyze.ts",
     "test:backfill-bank-transactions": "tsx tests-backend/integration/backfill-bank-transactions.ts",
     "test:backfill-invoices": "tsx tests-backend/integration/backfill-invoices.ts",
+    "test:backfill-document-hashes": "tsx tests-backend/integration/backfill-document-hashes.ts",
     "cleanup:bank-transactions": "tsx tests-backend/matching/cleanup-bank-transactions.ts",
     "cleanup:invoices": "tsx tests-backend/matching/cleanup-invoices.ts",
     "cleanup:matching-all": "tsx tests-backend/matching/cleanup-matching-all.ts",
