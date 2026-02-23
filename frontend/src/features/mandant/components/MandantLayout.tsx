@@ -1,10 +1,16 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { FileText, LayoutDashboard, User, Building2 } from 'lucide-react';
+import { FileText, LayoutDashboard, User, Building2, LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { supabase } from '@/lib/supabase';
 
 export default function MandantLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    navigate('/login')
+  }
 
   const navItems = [
     { label: 'Dashboard', path: '/mandant', icon: LayoutDashboard },
@@ -55,6 +61,13 @@ export default function MandantLayout() {
           >
             <Building2 className="h-4 w-4" />
             Zur Kanzlei wechseln
+          </button>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3 py-2 rounded w-full text-left text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground transition-colors text-fluid-sm"
+          >
+            <LogOut className="h-4 w-4" />
+            Abmelden
           </button>
         </div>
       </aside>

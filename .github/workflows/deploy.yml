@@ -32,6 +32,12 @@ jobs:
 
       - name: Build frontend
         run: pnpm --filter frontend build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      - name: Fix SPA routing (404 → index.html)
+        run: cp frontend/dist/index.html frontend/dist/404.html
 
       - uses: actions/configure-pages@v4
 
