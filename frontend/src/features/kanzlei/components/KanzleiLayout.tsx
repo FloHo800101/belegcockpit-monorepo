@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Outlet, useNavigate, useLocation, useParams, Link } from 'react-router-dom';
-import { FileText, Package, Users, User, Inbox } from 'lucide-react';
+import { FileText, Package, Users, User, Inbox, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
@@ -12,6 +12,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
 import { useInquiryPackage } from '../stores/inquiryPackageStore';
+import { supabase } from '@/lib/supabase';
 
 // Generate breadcrumbs based on current path
 // Note: Kanzlei-Überblick (Steuerberater) and Mandanten (Steuerfachangestellte) are parallel, not hierarchical
@@ -125,6 +126,11 @@ export default function KanzleiLayout() {
   const { mandantId, monthId, inContext } = useMandantContext();
   const inquiryPackage = useInquiryPackage();
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    navigate('/login')
+  }
+
   // Set inquiry package context if we're in a mandant/month context
   useEffect(() => {
     if (inContext && mandantId && monthId) {
@@ -216,6 +222,15 @@ export default function KanzleiLayout() {
           >
             <User className="h-4 w-4" />
             Zum Mandant wechseln
+          </button>
+
+          {/* Logout */}
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 px-3 py-2 rounded-md w-full text-left text-slate-400 hover:bg-slate-700 hover:text-white transition-colors text-fluid-sm"
+          >
+            <LogOut className="h-4 w-4" />
+            Abmelden
           </button>
         </div>
       </aside>
