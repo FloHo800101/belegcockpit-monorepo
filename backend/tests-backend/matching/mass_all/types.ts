@@ -62,6 +62,8 @@ export type OfflineReportInput = {
   tenantId: string;
   runId: string;
   createdAtISO: string;
+  docs?: Doc[];
+  txs?: Tx[];
   decisions: MatchDecision[];
   docLifecycle: NonNullable<PipelineResult["docLifecycle"]>;
   txLifecycle: NonNullable<PipelineResult["txLifecycle"]>;

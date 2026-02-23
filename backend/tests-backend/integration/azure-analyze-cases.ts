@@ -19,7 +19,8 @@ import {
   getTestTenantId,
   loadEnvFiles,
   removeFile,
-  uploadLocalFile,
+  sanitizeStorageFileName,
+  uploadBytes,
 } from "./_shared.ts";
 
 const BUCKET = "documents";
@@ -35,6 +36,80 @@ type AzureAnalyzeResult = {
   content?: string;
   documents?: Array<{ fields?: Record<string, unknown> }>;
 };
+
+class InvalidPdfPasswordError extends Error {}
+
+function toLatin1(bytes: Uint8Array): string {
+  let out = "";
+  for (let i = 0; i < bytes.length; i += 1) out += String.fromCharCode(bytes[i]);
+  return out;
+}
+
+function isPdfLikelyEncrypted(bytes: Uint8Array): boolean {
+  if (!bytes.length) return false;
+  const head = toLatin1(bytes.subarray(0, Math.min(bytes.length, 1024)));
+  if (!head.includes("%PDF-")) return false;
+  const sample = toLatin1(bytes.subarray(0, Math.min(bytes.length, 2_000_000)));
+  return /\/Encrypt\b/.test(sample);
+}
+
+async function decryptPdfWithQpdf(
+  encryptedPdf: Uint8Array,
+  password: string,
+  fileName: string
+): Promise<Uint8Array> {
+  const inputPath = await Deno.makeTempFile({ prefix: "belegcockpit-enc-", suffix: ".pdf" });
+  const outputPath = await Deno.makeTempFile({ prefix: "belegcockpit-dec-", suffix: ".pdf" });
+  try {
+    await Deno.writeFile(inputPath, encryptedPdf);
+    const cmd = new Deno.Command("qpdf", {
+      args: [`--password=${password}`, "--decrypt", inputPath, outputPath],
+      stdout: "null",
+      stderr: "piped",
+    });
+    const out = await cmd.output();
+    if (!out.success) {
+      const stderr = new TextDecoder().decode(out.stderr);
+      if (/invalid password|password/i.test(stderr)) {
+        throw new InvalidPdfPasswordError(`Invalid password for ${fileName}`);
+      }
+      if (/not recognized|no such file|cannot find/i.test(stderr)) {
+        throw new Error("qpdf is required to decrypt password-protected PDFs. Please install qpdf.");
+      }
+      throw new Error(`Failed to decrypt ${fileName}: ${stderr.trim() || "unknown qpdf error"}`);
+    }
+    return await Deno.readFile(outputPath);
+  } finally {
+    try {
+      await Deno.remove(inputPath);
+    } catch {
+      // ignore cleanup errors
+    }
+    try {
+      await Deno.remove(outputPath);
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+}
+
+async function requestPdfPassword(fileName: string, attempt: number): Promise<string> {
+  const envPassword = Deno.env.get("PDF_PASSWORD");
+  if (envPassword && envPassword.trim()) return envPassword.trim();
+  if (!Deno.stdin.isTerminal()) {
+    throw new Error(
+      `PDF '${fileName}' appears password-protected. Run interactively or set PDF_PASSWORD env var.`
+    );
+  }
+  const prefix = attempt > 1 ? `Attempt ${attempt}: ` : "";
+  const value = prompt(
+    `${prefix}PDF '${fileName}' is password-protected. Enter password (empty cancels):`
+  );
+  if (!value || !value.trim()) {
+    throw new Error(`Missing password for protected PDF '${fileName}'.`);
+  }
+  return value.trim();
+}
 
 function parseResultForModel(
   modelId: ModelId,
@@ -125,15 +200,11 @@ async function listAnalyzeFiles(): Promise<string[]> {
   return names;
 }
 
-function toSafeName(fileName: string): string {
-  return fileName.replaceAll("\\", "_").replaceAll("/", "_");
-}
-
 async function hasAnalyzeRunForFile(
   supabase: ReturnType<typeof createSupabaseTestClient>,
   fileName: string
 ): Promise<boolean> {
-  const safeName = toSafeName(fileName);
+  const safeName = sanitizeStorageFileName(fileName);
   const likePattern = `tests/analyzes/azure-analyze/%/${safeName}`;
   const { data, error } = await (supabase.from(RUNS_TABLE) as any)
     .select("id")
@@ -143,6 +214,25 @@ async function hasAnalyzeRunForFile(
     throw new Error(`Failed to check existing analyze runs: ${error.message}`);
   }
   return Boolean(data && data.length > 0);
+}
+
+async function findDocumentByHash(
+  supabase: ReturnType<typeof createSupabaseTestClient>,
+  tenantId: string,
+  fileHash: string
+): Promise<{ id: string; storage_path: string } | null> {
+  const { data, error } = await (supabase.from("documents") as any)
+    .select("id, storage_path")
+    .eq("tenant_id", tenantId)
+    .eq("file_hash", fileHash)
+    .limit(1);
+  if (error) {
+    throw new Error(`Failed to check existing documents by hash: ${error.message}`);
+  }
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const row = data[0] as { id?: string; storage_path?: string };
+  if (!row.id || !row.storage_path) return null;
+  return { id: row.id, storage_path: row.storage_path };
 }
 
 async function run() {
@@ -175,12 +265,49 @@ async function run() {
     const fileUrl = new URL(fileName, ANALYZE_DIR);
     const storagePath = buildStoragePath("azure-analyze", fileName);
 
-    const uploadMeta = await uploadLocalFile(
+    const fileExt = fileName.split(".").pop()?.toLowerCase();
+    let uploadBytesData: Uint8Array = await Deno.readFile(fileUrl);
+    if (fileExt === "pdf" && isPdfLikelyEncrypted(uploadBytesData)) {
+      let decrypted: Uint8Array | null = null;
+      let attempt = 1;
+      while (!decrypted && attempt <= 3) {
+        const password = await requestPdfPassword(fileName, attempt);
+        try {
+          decrypted = await decryptPdfWithQpdf(uploadBytesData, password, fileName);
+        } catch (error) {
+          if (error instanceof InvalidPdfPasswordError && attempt < 3) {
+            console.warn(`[azure-analyze] wrong PDF password for ${fileName}, retrying...`);
+            attempt += 1;
+            continue;
+          }
+          throw error;
+        }
+      }
+      if (!decrypted) {
+        throw new Error(`Could not decrypt password-protected PDF '${fileName}'.`);
+      }
+      uploadBytesData = new Uint8Array(decrypted);
+    }
+
+    const uploadMeta = await uploadBytes(
       supabase,
       BUCKET,
-      fileUrl,
+      uploadBytesData,
+      fileName,
       storagePath
     );
+    const duplicateDoc = await findDocumentByHash(supabase, tenantId, uploadMeta.fileHash);
+    if (duplicateDoc) {
+      console.log("[azure-analyze] duplicate_reused", {
+        fileName,
+        tenant_id: tenantId,
+        document_id: duplicateDoc.id,
+        file_hash_prefix: uploadMeta.fileHash.slice(0, 12),
+      });
+      await removeFile(supabase, BUCKET, storagePath);
+      continue;
+    }
+
     const documentId = await createDocumentRow({
       supabase,
       tenantId,
@@ -189,10 +316,10 @@ async function run() {
       originalFilename: fileName,
       mimeType: uploadMeta.contentType,
       fileSize: uploadMeta.size,
+      fileHash: uploadMeta.fileHash,
     });
 
     try {
-      const fileExt = fileName.split(".").pop()?.toLowerCase();
       const isImage = isImageExtension(fileExt);
       const modelsToRun: ModelId[] = [];
 

@@ -58,6 +58,7 @@ async function run() {
       originalFilename: fileName,
       mimeType: uploadMeta.contentType,
       fileSize: uploadMeta.size,
+      fileHash: uploadMeta.fileHash,
     });
 
     try {

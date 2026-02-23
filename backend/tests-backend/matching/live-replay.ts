@@ -1,5 +1,5 @@
 // How to run:
-// SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... FROM=... TO=... pnpm matching:live-replay
+// SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... FROM=... TO=... [INCLUDE_UNDATED_DOCS=1] pnpm matching:live-replay
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
@@ -18,8 +18,13 @@ import {
   normalizeVendor,
   extractInvoiceNo,
 } from "../../src/matching-engine/normalize";
-import { toApplyOps, toAuditRecord } from "../../src/matching-engine/persistence";
+import {
+  toApplyOps,
+  toAuditRecord,
+  projectUniqueEdgeRefs,
+} from "../../src/matching-engine/persistence";
 import { writeHtmlReport } from "./render-html-report";
+import { buildDocumentDateFilter } from "./live-replay-date-filter";
 
 dotenv.config({ path: ".env.live.local" });
 dotenv.config();
@@ -34,6 +39,7 @@ const TO = requireEnv(process.env.TO, "TO");
 const LIMIT_DOCS = toOptionalInt(process.env.LIMIT_DOCS);
 const LIMIT_TXS = toOptionalInt(process.env.LIMIT_TXS);
 const INCLUDE_LINKED = process.env.INCLUDE_LINKED === "1";
+const INCLUDE_UNDATED_DOCS = process.env.INCLUDE_UNDATED_DOCS === "1";
 
 const fromDate = parseDate(FROM, "FROM");
 const toDate = parseDate(TO, "TO");
@@ -65,8 +71,20 @@ async function main() {
 
   const docsRows = await loadDocuments(tenantId);
   const txRows = await loadTransactions(tenantId);
+  const invoiceLineItemsByInvoiceId = await loadInvoiceLineItems(
+    tenantId,
+    docsRows.map((row) => row.id as string).filter(Boolean)
+  );
+  const undatedDocsRowsCount = docsRows.filter(
+    (row) => !row.invoice_date && !row.due_date
+  ).length;
+  console.log(
+    `Documents loaded: total=${docsRows.length}, dated=${
+      docsRows.length - undatedDocsRowsCount
+    }, undated=${undatedDocsRowsCount}, include_undated=${INCLUDE_UNDATED_DOCS}`
+  );
 
-  const { docs, docMap, skippedDocs } = mapDocs(docsRows);
+  const { docs, docMap, skippedDocs } = mapDocs(docsRows, invoiceLineItemsByInvoiceId);
   const { txs, txMap, skippedTxs } = mapTxs(txRows);
 
   if (skippedDocs.length) {
@@ -112,6 +130,8 @@ async function main() {
     },
     createdAtISO,
     outputPath: reportPath,
+    docs,
+    txs,
   });
 
   console.log(`Run complete. run_id=${runId}`);
@@ -139,18 +159,21 @@ async function insertRun(tenantId: string, runId: string, createdAtISO: string) 
 }
 
 async function loadDocuments(tenantId: string) {
+  const dateFilter = buildDocumentDateFilter(
+    fromDateOnly,
+    toDateOnlyValue,
+    INCLUDE_UNDATED_DOCS
+  );
   let query = supabase
     .from("invoices")
     .select(
-      "id, tenant_id, document_id, amount, currency, link_state, invoice_date, due_date, invoice_no, iban, e2e_id, vendor_name, open_amount, created_at"
+      "id, tenant_id, document_id, amount, amount_candidates, currency, link_state, invoice_date, due_date, invoice_no, iban, e2e_id, vendor_name, buyer_name, open_amount, created_at"
     )
     .eq("tenant_id", tenantId)
-    .or(
-      `and(invoice_date.gte.${fromDateOnly},invoice_date.lte.${toDateOnlyValue}),and(due_date.gte.${fromDateOnly},due_date.lte.${toDateOnlyValue})`
-    )
+    .or(dateFilter)
     .order("invoice_date", { ascending: true });
 
-  if (!INCLUDE_LINKED) query = query.eq("link_state", "unlinked");
+  if (!INCLUDE_LINKED) query = query.in("link_state", ["unlinked", "partial", "suggested"]);
   if (LIMIT_DOCS) query = query.limit(LIMIT_DOCS);
 
   const { data, error } = await query;
@@ -158,18 +181,45 @@ async function loadDocuments(tenantId: string) {
   return data ?? [];
 }
 
+async function loadInvoiceLineItems(tenantId: string, invoiceIds: string[]) {
+  const grouped = new Map<string, any[]>();
+  if (!invoiceIds.length) return grouped;
+
+  for (const chunk of chunkArray(invoiceIds, 250)) {
+    const { data, error } = await supabase
+      .from("invoice_line_items")
+      .select(
+        "id, tenant_id, invoice_id, line_index, description, amount_signed, amount_abs, currency, link_state, open_amount"
+      )
+      .eq("tenant_id", tenantId)
+      .in("invoice_id", chunk)
+      .in("link_state", ["unlinked", "partial", "suggested"])
+      .order("line_index", { ascending: true });
+
+    if (error) throw new Error(`Failed to load invoice_line_items: ${error.message}`);
+
+    for (const row of data ?? []) {
+      const key = row.invoice_id as string;
+      const list = grouped.get(key) ?? [];
+      list.push(row);
+      grouped.set(key, list);
+    }
+  }
+
+  return grouped;
+}
 async function loadTransactions(tenantId: string) {
   let query = supabase
     .from("bank_transactions")
     .select(
-      "id, tenant_id, amount, currency, value_date, booking_date, iban, counterparty_name, end_to_end_id, reference, link_state, open_amount"
+      "id, tenant_id, amount, currency, foreign_amount, foreign_currency, exchange_rate, value_date, booking_date, iban, counterparty_name, end_to_end_id, reference, link_state, open_amount"
     )
     .eq("tenant_id", tenantId)
     .gte("value_date", fromDateOnly)
     .lte("value_date", toDateOnlyValue)
     .order("value_date", { ascending: true });
 
-  if (!INCLUDE_LINKED) query = query.eq("link_state", "unlinked");
+  if (!INCLUDE_LINKED) query = query.in("link_state", ["unlinked", "partial", "suggested"]);
   if (LIMIT_TXS) query = query.limit(LIMIT_TXS);
 
   const { data, error } = await query;
@@ -177,7 +227,7 @@ async function loadTransactions(tenantId: string) {
   return data ?? [];
 }
 
-function mapDocs(rows: any[]) {
+function mapDocs(rows: any[], lineItemsByInvoiceId?: Map<string, any[]>) {
   const docs: Doc[] = [];
   const docMap = new Map<string, Doc>();
   const skipped: any[] = [];
@@ -192,16 +242,42 @@ function mapDocs(rows: any[]) {
     }
 
     const vendorRaw = firstString(row.vendor_name);
-    const textRaw = buildText([vendorRaw, row.invoice_no, row.e2e_id]);
+    const buyerRaw = firstString(row.buyer_name);
+    const textRaw = buildText([vendorRaw, buyerRaw, row.invoice_no, row.e2e_id]);
 
     const invoiceDate = normalizeDateString(row.invoice_date);
     const dueDate = normalizeDateString(row.due_date);
     const invoiceNo = firstString(row.invoice_no, extractInvoiceNo(textRaw));
+    const openAmount = toNumber(row.open_amount);
+    const itemRows = lineItemsByInvoiceId?.get(row.id as string) ?? [];
+    const items = itemRows
+      .map((itemRow) => {
+        const amountSigned = toNumber(itemRow.amount_signed);
+        const amountAbs = toNumber(itemRow.amount_abs, itemRow.open_amount);
+        const openAmount = toNumber(itemRow.open_amount, itemRow.amount_abs);
+        if (!Number.isFinite(amountAbs) || amountAbs <= 0) return null;
+        return {
+          id: firstString(itemRow.id) ?? undefined,
+          line_index:
+            typeof itemRow.line_index === "number" && Number.isFinite(itemRow.line_index)
+              ? itemRow.line_index
+              : undefined,
+          description: firstString(itemRow.description) ?? undefined,
+          amount_signed: Number.isFinite(amountSigned) ? amountSigned : undefined,
+          amount_abs: amountAbs,
+          currency: firstString(itemRow.currency) ?? currency,
+          link_state: toLinkState(itemRow.link_state),
+          open_amount: Number.isFinite(openAmount) ? openAmount : undefined,
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
     const doc: Doc = {
       id: row.id,
       tenant_id: row.tenant_id,
       amount: Math.abs(amount),
+      amount_candidates: toNumberArray(row.amount_candidates),
+      items: items.length ? items : undefined,
       currency,
       link_state: row.link_state,
       invoice_date: invoiceDate ?? undefined,
@@ -211,9 +287,11 @@ function mapDocs(rows: any[]) {
       e2e_id: firstString(row.e2e_id),
       vendor_raw: vendorRaw ?? undefined,
       vendor_norm: normalizeVendor(vendorRaw ?? "") || undefined,
+      buyer_raw: buyerRaw ?? undefined,
+      buyer_norm: normalizeVendor(buyerRaw ?? "") || undefined,
       text_raw: textRaw || undefined,
       text_norm: normalizeText(textRaw || "") || undefined,
-      open_amount: row.open_amount ?? null,
+      open_amount: Number.isFinite(openAmount) ? openAmount : null,
     };
 
     docs.push(doc);
@@ -239,6 +317,10 @@ function mapTxs(rows: any[]) {
 
     const direction = rawAmount < 0 ? "out" : "in";
     const amount = Math.abs(rawAmount);
+    const foreignAmountRaw = toNumber(row.foreign_amount);
+    const foreignAmount = Number.isFinite(foreignAmountRaw) ? Math.abs(foreignAmountRaw) : null;
+    const exchangeRateRaw = toNumber(row.exchange_rate);
+    const exchangeRate = Number.isFinite(exchangeRateRaw) ? exchangeRateRaw : null;
     const bookingDate = normalizeDateString(row.booking_date ?? row.value_date);
     const vendorRaw = firstString(row.counterparty_name);
     const ref = firstString(row.reference);
@@ -250,6 +332,9 @@ function mapTxs(rows: any[]) {
       amount,
       direction,
       currency,
+      foreign_amount: foreignAmount,
+      foreign_currency: firstString(row.foreign_currency),
+      exchange_rate: exchangeRate,
       booking_date: bookingDate ?? new Date().toISOString(),
       link_state: row.link_state,
       iban: firstString(row.iban),
@@ -328,6 +413,7 @@ function buildRepo(params: {
       const groupOps = ops.filter((op) => op.kind === "upsert_group");
       const edgeOps = ops.filter((op) => op.kind === "upsert_edge");
       const docOps = ops.filter((op) => op.kind === "update_doc");
+      const itemOps = ops.filter((op) => op.kind === "update_invoice_line_item");
       const txOps = ops.filter((op) => op.kind === "update_tx");
 
       if (groupOps.length) {
@@ -356,27 +442,34 @@ function buildRepo(params: {
       }
 
       if (edgeOps.length) {
-        const docEdges = edgeOps.map((op) => {
-          const doc = docMap.get(op.doc_id);
-          const tx = txMap.get(op.tx_id);
+        const { docRefs, txRefs } = projectUniqueEdgeRefs(edgeOps);
+        const docEdges = docRefs.map((ref) => {
+          const doc = docMap.get(ref.doc_id);
+          const txOp = edgeOps.find(
+            (op) =>
+              op.kind === "upsert_edge" &&
+              op.match_group_id === ref.match_group_id &&
+              op.doc_id === ref.doc_id
+          );
+          const tx = txOp ? txMap.get(txOp.tx_id) : undefined;
           const direction = tx?.direction === "out" ? "debit" : "credit";
           return {
             tenant_id: tenantId,
-            match_group_id: op.match_group_id,
-            document_id: op.doc_id,
+            match_group_id: ref.match_group_id,
+            document_id: ref.doc_id,
             amount: doc?.amount ?? null,
             direction,
             run_id: runId,
             created_at: nowISO,
           };
         });
-        const txEdges = edgeOps.map((op) => {
-          const tx = txMap.get(op.tx_id);
+        const txEdges = txRefs.map((ref) => {
+          const tx = txMap.get(ref.tx_id);
           const direction = tx?.direction === "out" ? "debit" : "credit";
           return {
             tenant_id: tenantId,
-            match_group_id: op.match_group_id,
-            bank_transaction_id: op.tx_id,
+            match_group_id: ref.match_group_id,
+            bank_transaction_id: ref.tx_id,
             amount: tx?.amount ?? null,
             direction,
             run_id: runId,
@@ -445,6 +538,60 @@ function buildRepo(params: {
         }
       }
 
+      if (itemOps.length) {
+        const applied: AppliedRow[] = [];
+
+        for (const op of itemOps) {
+          const decision = decisionByDocId.get(op.invoice_id);
+          const matchGroupId = (op.match_group_id as string | null) ?? decision?.match_group_id ?? null;
+          const update: Record<string, unknown> = {
+            link_state: op.link_state,
+            open_amount: op.open_amount,
+            match_group_id: matchGroupId,
+            matched_at: nowISO,
+            updated_at: nowISO,
+          };
+
+          let query = supabase
+            .from("invoice_line_items")
+            .update(update)
+            .eq("tenant_id", tenantId)
+            .eq("invoice_id", op.invoice_id);
+
+          if (typeof op.line_item_id === "string" && op.line_item_id) {
+            query = query.eq("id", op.line_item_id);
+          } else if (typeof op.line_index === "number") {
+            query = query.eq("line_index", op.line_index);
+          } else {
+            continue;
+          }
+
+          const { error } = await query;
+          if (error) {
+            throw new Error(`Failed to update invoice_line_items: ${error.message}`);
+          }
+
+          applied.push({
+            op_kind: "update_invoice_line_item",
+            entity_type: "invoice_line_item",
+            entity_id:
+              typeof op.line_item_id === "string" && op.line_item_id
+                ? op.line_item_id
+                : null,
+            match_group_id: matchGroupId,
+            after_state: update,
+            payload: {
+              invoice_id: op.invoice_id,
+              line_index: op.line_index ?? null,
+            },
+          });
+        }
+
+        if (applied.length) {
+          await insertApplied(tenantId, runId, applied);
+        }
+      }
+
       if (txOps.length) {
         const txIds = unique(txOps.map((op) => op.tx_id));
         const beforeTxs = await fetchTxs(tenantId, txIds);
@@ -507,7 +654,7 @@ function buildRepo(params: {
       let query = supabase
         .from("bank_transactions")
         .select(
-          "id, tenant_id, amount, currency, value_date, booking_date, iban, counterparty_name, end_to_end_id, reference, link_state, open_amount"
+          "id, tenant_id, amount, currency, foreign_amount, foreign_currency, exchange_rate, value_date, booking_date, iban, counterparty_name, end_to_end_id, reference, link_state, open_amount"
         )
         .eq("tenant_id", tenantId)
         .gte("value_date", toDateOnly(cutoff))
@@ -706,11 +853,30 @@ function toNumber(...values: any[]): number {
   return Number.NaN;
 }
 
+function toNumberArray(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: number[] = [];
+  for (const item of value) {
+    const num = toNumber(item);
+    if (!Number.isFinite(num)) continue;
+    out.push(Math.abs(Math.round(num * 100) / 100));
+  }
+  return out.length ? out : undefined;
+}
+
 function firstString(...values: any[]): string | null {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
   }
   return null;
+}
+
+function toLinkState(value: unknown): "unlinked" | "linked" | "partial" | "suggested" | undefined {
+  if (typeof value !== "string") return undefined;
+  if (value === "unlinked" || value === "linked" || value === "partial" || value === "suggested") {
+    return value;
+  }
+  return undefined;
 }
 
 function unique(values: string[]): string[] {

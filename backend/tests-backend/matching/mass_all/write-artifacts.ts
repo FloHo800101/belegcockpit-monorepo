@@ -204,7 +204,7 @@ function summarizeDecision(decision: MatchDecision): string {
   return `${decision.relation_type} / ${decision.state}`;
 }
 
-function normalizeIds(ids: string[]): string {
+function normalizeIds(ids: readonly string[]): string {
   return [...ids].sort().join("|");
 }
 

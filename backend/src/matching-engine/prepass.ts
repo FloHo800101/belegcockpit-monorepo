@@ -9,6 +9,8 @@ import {
 import { MatchingConfig, amountCompatible } from "./config";
 import { matchInvoiceNoInText, normalizeText } from "./normalize";
 import { canonId } from "./ids";
+import { docPartyNormForTx } from "./doc-party";
+import { txAmountForCurrency } from "./tx-amounts";
 
 export type PrepassResult = {
   final: MatchDecision[];
@@ -58,17 +60,17 @@ export function hardKeyType(
   tx: Tx,
   cfg: MatchingConfig
 ): HardKeyType | null {
-  if (!currencyCompatible(doc.currency, tx.currency)) return null;
-  if (!amountDirectionOk(doc, tx)) return null;
-  if (!amountCompatible(Math.abs(doc.amount), Math.abs(tx.amount), cfg)) return null;
+  const txAmount = txAmountForCurrency(tx, doc.currency);
+  if (txAmount == null) return null;
+  if (!amountCompatible(Math.abs(doc.amount), Math.abs(txAmount), cfg)) return null;
 
   const dateOk = dateMatches(doc, tx, cfg);
   const invoiceNoMatch = hasInvoiceMatch(doc, tx);
   const vendorOk = vendorMatchStrong(doc, tx);
 
   debugHardCheck(doc, tx, {
-    currency_ok: currencyCompatible(doc.currency, tx.currency),
-    amount_ok: amountCompatible(Math.abs(doc.amount), Math.abs(tx.amount), cfg),
+    currency_ok: currencyCompatible(doc.currency, tx),
+    amount_ok: amountCompatible(Math.abs(doc.amount), Math.abs(txAmount), cfg),
     direction_ok: amountDirectionOk(doc, tx),
     date_ok: dateOk,
     invoice_no_ok: invoiceNoMatch,
@@ -76,6 +78,8 @@ export function hardKeyType(
   });
 
   if (invoiceNoMatch && dateOk) return "INVOICE_NO";
+
+  if (!amountDirectionOk(doc, tx)) return null;
 
   if (dateOk && vendorOk && !doc.invoice_no) {
     return "AMOUNT_DATE_VENDOR";
@@ -101,6 +105,7 @@ export function hasPartialOrBatchPaymentHints(
     safeLower(tx.vendor_norm),
     safeLower(doc?.text_norm),
     safeLower(doc?.vendor_norm),
+    safeLower(doc?.buyer_norm),
   ]
     .filter(Boolean)
     .join(" ");
@@ -176,13 +181,14 @@ function filterUniquePairs(
 }
 
 function buildDecision(tx: Tx, doc: Doc, key: HardKeyType, cfg: MatchingConfig): MatchDecision {
+  const txAmount = txAmountForCurrency(tx, doc.currency) ?? tx.amount;
   const reasonCodes = buildReasonCodes(doc, tx, cfg, key);
   const inputs: Record<string, any> = {
     key,
     doc_id: doc.id,
     tx_id: tx.id,
     doc_amount: doc.amount,
-    tx_amount: tx.amount,
+    tx_amount: txAmount,
     currency: doc.currency,
   };
 
@@ -253,8 +259,8 @@ function isMatchable(state: LinkState): boolean {
   return state === "unlinked" || state === "suggested";
 }
 
-function currencyCompatible(docCurrency: string, txCurrency: string): boolean {
-  return docCurrency === txCurrency;
+function currencyCompatible(docCurrency: string, tx: Tx): boolean {
+  return txAmountForCurrency(tx, docCurrency) != null;
 }
 
 function canonIban(value: string) {
@@ -308,14 +314,15 @@ function parseIsoDate(value?: string | null) {
 }
 
 function vendorMatchStrong(doc: Doc, tx: Tx) {
-  const docTokens = tokenize(doc.vendor_norm);
+  const docVendor = docPartyNormForTx(doc, tx);
+  const docTokens = tokenize(docVendor);
   const txTokens = tokenize(tx.vendor_norm);
   if (!docTokens.length || !txTokens.length) return false;
 
   const overlap = countOverlap(docTokens, txTokens);
   if (overlap >= 2) return true;
 
-  const docText = doc.vendor_norm ?? "";
+  const docText = docVendor ?? "";
   const txText = tx.vendor_norm ?? "";
   if (!docText || !txText) return false;
   if (overlap >= 1 && (docTokens.length <= 2 || txTokens.length <= 2)) {

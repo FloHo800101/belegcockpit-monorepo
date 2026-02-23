@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { MatchDecision, PipelineDebug } from "../../src/matching-engine";
+import type { Doc, MatchDecision, PipelineDebug, Tx } from "../../src/matching-engine";
 import { renderCasesSection as renderDocCases } from "./mass_doc/write-artifacts";
 import { renderCasesSection as renderTxCases } from "./mass_tx/write-artifacts";
 import { evaluateMatchingCases } from "./mass_all/write-artifacts";
@@ -23,6 +23,8 @@ function buildAllReport(input: AllReportInput): string {
     tenantId,
     runId,
     createdAtISO,
+    docs,
+    txs,
     decisions,
     docLifecycle,
     txLifecycle,
@@ -30,6 +32,7 @@ function buildAllReport(input: AllReportInput): string {
     cases,
   } = input;
   const decisionRows = decisions.map(renderDecisionRow).join("\n");
+  const matchedLineItemSection = renderMatchedLineItemSection(decisions, docs ?? [], txs ?? []);
   const matchingSection = renderMatchingCasesSection(cases?.matching, decisions);
   const docSection = renderDocCases(cases?.doc, docLifecycle);
   const txSection = renderTxCases(cases?.tx, txLifecycle);
@@ -132,6 +135,7 @@ function buildAllReport(input: AllReportInput): string {
   ${matchingSection}
   ${docSection}
   ${txSection}
+  ${matchedLineItemSection}
 
   <div class="panel">
     <table>
@@ -156,6 +160,207 @@ function buildAllReport(input: AllReportInput): string {
   </div>
 </body>
 </html>`;
+}
+
+type MatchedItemLinkRow = {
+  relationType: string;
+  state: string;
+  docId: string;
+  txId: string;
+  txAmount: number | null;
+  lineItems: Array<{
+    itemId: string;
+    description: string;
+    signedAmount: number | null;
+  }>;
+  lineItemsSignedSum: number | null;
+  lineItemsAbsSum: number | null;
+  deltaAbs: number | null;
+  viaBundle: boolean;
+};
+
+function renderMatchedLineItemSection(
+  decisions: MatchDecision[],
+  docs: Doc[],
+  txs: Tx[]
+): string {
+  const rows = buildMatchedItemLinkRows(decisions, docs, txs);
+  if (rows.length === 0) {
+    return `<div class="panel"><h2>Line-Item Matching</h2><div class="muted">No matched line-item links in decisions.</div></div>`;
+  }
+
+  const totalTx = rows.reduce((acc, row) => acc + (row.txAmount ?? 0), 0);
+  const totalItemAbs = rows.reduce((acc, row) => acc + (row.lineItemsAbsSum ?? 0), 0);
+  const bundleCount = rows.filter((row) => row.viaBundle).length;
+  const tableRows = rows
+    .map((row) => {
+      const lineItems = row.lineItems.length
+        ? row.lineItems
+            .map((item) => {
+              const amount = item.signedAmount == null ? "-" : formatAmount(item.signedAmount);
+              const label = `${item.itemId}${item.description ? ` (${item.description})` : ""}: ${amount}`;
+              return escapeHtml(label);
+            })
+            .join("<br/>")
+        : "<span class=\"muted\">-</span>";
+      return `
+<tr>
+  <td>${escapeHtml(`${row.relationType} / ${row.state}`)}</td>
+  <td>${escapeHtml(row.docId)}</td>
+  <td>${escapeHtml(row.txId)}</td>
+  <td>${escapeHtml(formatAmountNullable(row.txAmount))}</td>
+  <td>${lineItems}</td>
+  <td>${escapeHtml(formatAmountNullable(row.lineItemsSignedSum))}</td>
+  <td>${escapeHtml(formatAmountNullable(row.lineItemsAbsSum))}</td>
+  <td>${escapeHtml(formatAmountNullable(row.deltaAbs))}</td>
+  <td>${row.viaBundle ? "yes" : "no"}</td>
+</tr>`;
+    })
+    .join("\n");
+
+  return `
+  <div class="panel">
+    <h2>Line-Item Matching</h2>
+    <div class="meta">
+      <div><strong>rows</strong> ${rows.length}</div>
+      <div><strong>bundle_rows</strong> ${bundleCount}</div>
+      <div><strong>tx_amount_sum</strong> ${escapeHtml(formatAmount(totalTx))}</div>
+      <div><strong>line_item_abs_sum</strong> ${escapeHtml(formatAmount(totalItemAbs))}</div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Type / State</th>
+          <th>Doc ID</th>
+          <th>Tx ID</th>
+          <th>Tx Amount</th>
+          <th>Matched Line Items</th>
+          <th>Line Sum Signed</th>
+          <th>Line Sum Abs</th>
+          <th>Delta Abs</th>
+          <th>Bundle</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function buildMatchedItemLinkRows(
+  decisions: MatchDecision[],
+  docs: Doc[],
+  txs: Tx[]
+): MatchedItemLinkRow[] {
+  const docMap = new Map(docs.map((doc) => [doc.id, doc] as const));
+  const txMap = new Map(txs.map((tx) => [tx.id, tx] as const));
+  const out: MatchedItemLinkRow[] = [];
+
+  for (const decision of decisions) {
+    const rawLinks = decision.inputs?.matched_item_links;
+    if (!Array.isArray(rawLinks) || rawLinks.length === 0) continue;
+    const docId = decision.doc_ids[0];
+    if (!docId) continue;
+    const doc = docMap.get(docId);
+    if (!doc) continue;
+
+    for (const link of rawLinks) {
+      if (!link || typeof link !== "object") continue;
+      const entry = link as {
+        tx_id?: unknown;
+        item_ids?: unknown;
+        via_bundle?: unknown;
+      };
+      const txId = typeof entry.tx_id === "string" ? entry.tx_id : "";
+      if (!txId) continue;
+      const tx = txMap.get(txId);
+      const itemIds = Array.isArray(entry.item_ids)
+        ? entry.item_ids.filter((value): value is string => typeof value === "string")
+        : [];
+      const matchedItems = itemIds.map((itemId) => resolveDocItem(doc, itemId));
+      const signedAmounts = matchedItems
+        .map((item) => item?.signedAmount)
+        .filter((value): value is number => Number.isFinite(value));
+      const lineItemsSignedSum = signedAmounts.length
+        ? roundCurrency(signedAmounts.reduce((acc, value) => acc + value, 0))
+        : null;
+      const lineItemsAbsSum =
+        lineItemsSignedSum == null ? null : roundCurrency(Math.abs(lineItemsSignedSum));
+      const txAmount = tx?.amount ?? null;
+      const deltaAbs =
+        txAmount == null || lineItemsAbsSum == null
+          ? null
+          : roundCurrency(Math.abs(txAmount - lineItemsAbsSum));
+
+      out.push({
+        relationType: decision.relation_type,
+        state: decision.state,
+        docId,
+        txId,
+        txAmount,
+        lineItems: matchedItems.map((item, index) => ({
+          itemId: itemIds[index] ?? "-",
+          description: item?.description ?? "",
+          signedAmount: item?.signedAmount ?? null,
+        })),
+        lineItemsSignedSum,
+        lineItemsAbsSum,
+        deltaAbs,
+        viaBundle: entry.via_bundle === true,
+      });
+    }
+  }
+
+  return out;
+}
+
+function resolveDocItem(
+  doc: Doc,
+  itemRef: string
+): { description: string; signedAmount: number | null } | null {
+  const items = doc.items ?? [];
+  if (itemRef.startsWith("line:")) {
+    const lineIndex = Number.parseInt(itemRef.slice(5), 10);
+    const item = items.find((entry) => entry.line_index === lineIndex);
+    if (!item) return null;
+    return {
+      description: item.description ?? "",
+      signedAmount: toSignedAmount(item),
+    };
+  }
+
+  const byId = items.find((entry) => entry.id === itemRef);
+  if (!byId) return null;
+  return {
+    description: byId.description ?? "",
+    signedAmount: toSignedAmount(byId),
+  };
+}
+
+function toSignedAmount(item: NonNullable<Doc["items"]>[number]): number | null {
+  if (typeof item.amount_signed === "number" && Number.isFinite(item.amount_signed)) {
+    return roundCurrency(item.amount_signed);
+  }
+  if (typeof item.amount_abs === "number" && Number.isFinite(item.amount_abs)) {
+    return roundCurrency(item.amount_abs);
+  }
+  if (typeof item.open_amount === "number" && Number.isFinite(item.open_amount)) {
+    return roundCurrency(item.open_amount);
+  }
+  return null;
+}
+
+function formatAmount(value: number): string {
+  return value.toFixed(2);
+}
+
+function formatAmountNullable(value: number | null): string {
+  return value == null ? "-" : formatAmount(value);
+}
+
+function roundCurrency(value: number): number {
+  return Math.round(value * 100) / 100;
 }
 
 function renderDecisionRow(decision: MatchDecision): string {

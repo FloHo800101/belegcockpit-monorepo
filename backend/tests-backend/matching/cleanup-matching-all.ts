@@ -21,6 +21,7 @@ async function main() {
   await resetEntities("bank_transactions");
   await resetEntities("invoices");
   await resetDocuments();
+  await resetInvoiceLineItems();
 
   await deleteAll("match_edges_docs");
   await deleteAll("match_edges_txs");
@@ -66,6 +67,21 @@ async function resetDocuments() {
     .not("id", "is", null);
   if (error) {
     throw new Error(`Failed to reset documents: ${error.message}`);
+  }
+}
+
+async function resetInvoiceLineItems() {
+  const { error } = await supabase
+    .from("invoice_line_items")
+    .update({
+      link_state: "unlinked",
+      match_group_id: null,
+      matched_at: null,
+      open_amount: 0,
+    })
+    .not("id", "is", null);
+  if (error) {
+    throw new Error(`Failed to reset invoice_line_items: ${error.message}`);
   }
 }
 

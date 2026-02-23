@@ -34,6 +34,8 @@ export type { MatchingConfig } from "./config";
 
 // Core modules
 export { partitionByLinkState } from "./partition";
+export { runItemFirstPhase } from "./item-first";
+export type { ItemFirstPhaseResult } from "./item-first";
 export type { Partitions, PartitionMeta } from "./partition";
 
 export { evaluateDocLifecycle, evaluateTxLifecycle } from "./lifecycles";
@@ -69,11 +71,12 @@ export type { Resolved } from "./decision-resolver";
 export {
   toApplyOps,
   toAuditRecord,
+  projectUniqueEdgeRefs,
   inferredLinkState,
   assertDecisionPersistable,
   decisionKey as decisionKeyForAudit,
 } from "./persistence";
-export type { ApplyOp, AuditRecord } from "./persistence";
+export type { ApplyOp, AuditRecord, EdgeDocRef, EdgeTxRef } from "./persistence";
 
 // Utilities
 export { normalizeText, normalizeVendor, extractInvoiceNo, stripDiacritics, tokenize } from "./normalize";

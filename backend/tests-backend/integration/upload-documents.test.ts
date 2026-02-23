@@ -80,6 +80,7 @@ describeHosted("upload documents (integration, hosted)", () => {
       });
       documentId = res.documentId;
       storagePath = res.storagePath;
+      expect(res.reused).toBe(false);
 
       const { data: row, error: rowErr } = await supabase
         .from("documents")
@@ -106,6 +107,24 @@ describeHosted("upload documents (integration, hosted)", () => {
 
       const downloadedText = await downloaded.text();
       expect(downloadedText).toBe(contents);
+
+      const duplicate = await uploadDocument({
+        supabase,
+        tenantId,
+        filePath: file,
+        uploadedBy: null,
+      });
+      expect(duplicate.reused).toBe(true);
+      expect(duplicate.documentId).toBe(documentId);
+      expect(duplicate.storagePath).toBe(storagePath);
+
+      const { count, error: countErr } = await supabase
+        .from("documents")
+        .select("id", { count: "exact", head: true })
+        .eq("tenant_id", tenantId)
+        .eq("file_hash", expectedHash);
+      if (countErr) throw countErr;
+      expect(count).toBe(1);
     } finally {
       if (storagePath) {
         await supabase.storage.from("documents").remove([storagePath]);

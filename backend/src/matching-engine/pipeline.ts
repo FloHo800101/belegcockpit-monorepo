@@ -2,6 +2,7 @@ import { resolveConfig, MatchingConfig } from "./config";
 import { candidatesForTx } from "./candidates";
 import { resolveConflicts } from "./decision-resolver";
 import { evaluateDocLifecycle, evaluateTxLifecycle } from "./lifecycles";
+import { runItemFirstPhase } from "./item-first";
 import { matchManyToMany, matchManyToOne, matchOneToMany, matchOneToOne } from "./matchers";
 import { normalizeTx } from "./normalization";
 import { prepassHardMatches } from "./prepass";
@@ -28,6 +29,7 @@ export type PipelineRunOptions = {
 export type PipelineDebug = {
   partitions: { doc_tx: { docs: number; txs: number }; doc_only: number; tx_only: number };
   prepass: { final: number; remainingDocs: number; remainingTx: number };
+  itemFirst: { decisions: number; remainingDocs: number; remainingTx: number };
   generated: { relations: number; decisions: number };
   resolved: { final: number; suggestions: number };
 };
@@ -63,14 +65,28 @@ export async function run_pipeline(
       return evaluateTxLifecycle(tx, now, cfg, history);
     })
   );
+  const txLifecycleById = new Map(txLifecycle.map((item) => [item.txId, item]));
 
   const prepass = prepassHardMatches(parts.doc_tx.docs, parts.doc_tx.txs, cfg);
-  const decisions: MatchDecision[] = [...prepass.final];
+  const itemFirst = runItemFirstPhase(prepass.remainingDocs, prepass.remainingTx, cfg);
+  const decisions: MatchDecision[] = [...prepass.final, ...itemFirst.decisions];
+
+  const relationDocs = itemFirst.remainingDocs;
+  const relationTxs = dedupeTxById([...itemFirst.remainingTx, ...parts.tx_only.txs]);
 
   let relationsCount = 0;
-  for (const tx of prepass.remainingTx) {
-    const docCands = candidatesForTx(tx, prepass.remainingDocs, cfg);
-    const relSet = detectRelationsForTx(tx, docCands, prepass.remainingTx, cfg);
+  for (const tx of relationTxs) {
+    const includeLinkedDocs = txLifecycleById.get(tx.id)?.kind === "subscription_tx";
+    const txForMatching =
+      includeLinkedDocs && tx.is_recurring_hint !== true && tx.isRecurringHint !== true
+        ? { ...tx, is_recurring_hint: true as const }
+        : tx;
+    const docsForTx = includeLinkedDocs
+      ? mergeDocsById(relationDocs, collectLinkedDocsForTenant(docsInput, tx.tenant_id))
+      : relationDocs;
+    const docCands = candidatesForTx(txForMatching, docsForTx, cfg, { includeLinkedDocs });
+    const relationTxPool = txForMatching === tx ? relationTxs : replaceTxById(relationTxs, txForMatching);
+    const relSet = detectRelationsForTx(txForMatching, docCands, relationTxPool, cfg);
     relationsCount +=
       relSet.oneToOne.length +
       relSet.manyToOne.length +
@@ -116,6 +132,11 @@ export async function run_pipeline(
         final: prepass.final.length,
         remainingDocs: prepass.remainingDocs.length,
         remainingTx: prepass.remainingTx.length,
+      },
+      itemFirst: {
+        decisions: itemFirst.decisions.length,
+        remainingDocs: relationDocs.length,
+        remainingTx: relationTxs.length,
       },
       generated: { relations: relationsCount, decisions: decisions.length },
       resolved: { final: resolved.final.length, suggestions: resolved.suggestions.length },
@@ -192,6 +213,40 @@ function normalizeTenantId(value?: string | null): string {
   if (!value) return "__unknown__";
   const trimmed = value.trim();
   return trimmed ? trimmed : "__unknown__";
+}
+
+function collectLinkedDocsForTenant(docs: Doc[], tenantId: string): Doc[] {
+  const tenantKey = normalizeTenantId(tenantId);
+  return docs.filter(
+    (doc) => normalizeTenantId(doc.tenant_id) === tenantKey && doc.link_state === "linked"
+  );
+}
+
+function mergeDocsById(primary: Doc[], extra: Doc[]): Doc[] {
+  if (extra.length === 0) return primary;
+  const out = [...primary];
+  const seen = new Set(out.map((doc) => doc.id));
+  for (const doc of extra) {
+    if (seen.has(doc.id)) continue;
+    seen.add(doc.id);
+    out.push(doc);
+  }
+  return out;
+}
+
+function dedupeTxById(txs: Tx[]): Tx[] {
+  const out: Tx[] = [];
+  const seen = new Set<string>();
+  for (const tx of txs) {
+    if (seen.has(tx.id)) continue;
+    seen.add(tx.id);
+    out.push(tx);
+  }
+  return out;
+}
+
+function replaceTxById(txs: Tx[], replacement: Tx): Tx[] {
+  return txs.map((item) => (item.id === replacement.id ? replacement : item));
 }
 
 /*

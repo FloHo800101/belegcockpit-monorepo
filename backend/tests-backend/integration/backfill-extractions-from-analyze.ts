@@ -112,31 +112,37 @@ async function run() {
     let detectionReasons: string[] | null = null;
     let parsingPath = "azure_invoice";
 
-    if (run.model_id === "prebuilt-receipt") {
-      parsed = mapAzureReceiptToParseResult(run.analyze_result);
-      detectedDocumentType = parsed.parsed?.documentType ?? "receipt";
-      detectionConfidence = parsed.confidence ?? run.parse_confidence ?? null;
-      detectionReasons = ["backfill"];
-      parsingPath = "azure_receipt";
-    } else if (run.model_id === "prebuilt-invoice") {
-      const detection = detectDocumentType({
-        text: (analyze.content ?? "").toString(),
-        fileName,
-        azureResult: run.analyze_result,
-      });
-      detectedDocumentType = detection.documentType;
-      detectionConfidence = detection.confidence;
-      detectionReasons = detection.reasons;
-      if (detection.documentType === "bank_statement") {
-        parsed = mapAzureBankStatementToParseResult(run.analyze_result, fileName);
-        parsingPath = "azure_bank_statement";
-      } else {
-        parsed = mapAzureInvoiceToParseResult(run.analyze_result);
-        parsingPath = "azure_invoice";
-      }
-    } else {
+    if (run.model_id !== "prebuilt-receipt" && run.model_id !== "prebuilt-invoice") {
       skipped += 1;
       continue;
+    }
+
+    const detection = detectDocumentType({
+      text: (analyze.content ?? "").toString(),
+      fileName,
+      azureResult: run.analyze_result,
+    });
+    detectedDocumentType = detection.documentType;
+    detectionConfidence = detection.confidence;
+    detectionReasons = detection.reasons;
+
+    if (detection.documentType === "bank_statement") {
+      parsed = mapAzureBankStatementToParseResult(run.analyze_result, fileName);
+      parsingPath = "azure_bank_statement";
+    } else if (detection.documentType === "invoice") {
+      parsed = mapAzureInvoiceToParseResult(run.analyze_result);
+      parsingPath = "azure_invoice";
+    } else if (run.model_id === "prebuilt-receipt") {
+      parsed = mapAzureReceiptToParseResult(run.analyze_result);
+      if (!detectedDocumentType) detectedDocumentType = parsed.parsed?.documentType ?? "receipt";
+      if (detectionConfidence == null) {
+        detectionConfidence = parsed.confidence ?? run.parse_confidence ?? null;
+      }
+      if (!detectionReasons || detectionReasons.length === 0) detectionReasons = ["backfill"];
+      parsingPath = "azure_receipt";
+    } else {
+      parsed = mapAzureInvoiceToParseResult(run.analyze_result);
+      parsingPath = "azure_invoice";
     }
 
     if (!parsed?.parsed) {

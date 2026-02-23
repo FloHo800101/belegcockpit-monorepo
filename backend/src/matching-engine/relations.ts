@@ -1,5 +1,9 @@
 import { Doc, Tx, DocCandidate, Relation, RelationSet } from "./types";
 import { MatchingConfig, amountCompatible, calcWindow } from "./config";
+import { resolveDocAmountMatch } from "./amount-candidates";
+import { vendorCompatible } from "./vendor";
+import { docPartyNormForTx, docPartyNorms } from "./doc-party";
+import { txAmountForCurrency, txSupportsCurrency } from "./tx-amounts";
 
 export function detectRelationsForTx(
   tx: Tx,
@@ -8,7 +12,7 @@ export function detectRelationsForTx(
   cfg: MatchingConfig
 ): RelationSet {
   const filtered = docCands.filter(
-    (c) => c.doc.currency === tx.currency && c.doc.tenant_id === tx.tenant_id
+    (c) => txSupportsCurrency(tx, c.doc.currency) && c.doc.tenant_id === tx.tenant_id
   );
   const manyToOneCandidates = filterManyToOneCandidates(filtered, tx);
 
@@ -29,7 +33,11 @@ export function detectRelationsForTx(
     }
   }
 
-  const seedDocs = filtered.filter((cand) => isPotentialPartialFlow(cand, tx, cfg));
+  const seedDocs = filtered.filter(
+    (cand) =>
+      isPotentialPartialFlow(cand, tx, cfg) &&
+      vendorCompatible(docPartyNormForTx(cand.doc, tx), tx.vendor_norm)
+  );
   for (const seed of seedDocs) {
     const extraTxs = findRelatedTxs(seed.doc, tx, txsInPool, cfg, 10);
     const combined = uniqueById([tx, ...extraTxs]);
@@ -71,8 +79,9 @@ function filterManyToOneCandidates(cands: DocCandidate[], tx: Tx): DocCandidate[
 
   if (tx.vendor_norm) {
     filtered = filtered.filter((cand) => {
-      if (!cand.doc.vendor_norm) return false;
-      return cand.doc.vendor_norm === tx.vendor_norm;
+      const docParty = docPartyNormForTx(cand.doc, tx);
+      if (!docParty) return false;
+      return vendorCompatible(docParty, tx.vendor_norm);
     });
   }
 
@@ -89,22 +98,31 @@ function buildExactManyToMany(
   docCands: DocCandidate[],
   txsInPool: Tx[],
   cfg: MatchingConfig
-): Relation | null {
+): Extract<Relation, { kind: "many_to_many" }> | null {
   if (docCands.length < 2) return null;
 
   const vendorFiltered = tx.vendor_norm
-    ? docCands.filter((cand) => cand.doc.vendor_norm === tx.vendor_norm)
+    ? docCands.filter((cand) =>
+        vendorCompatible(docPartyNormForTx(cand.doc, tx), tx.vendor_norm)
+      )
     : docCands;
   if (vendorFiltered.length < 2) return null;
 
   const docs = vendorFiltered.map((cand) => cand.doc);
+  const targetCurrency = docs[0]?.currency;
+  if (!targetCurrency) return null;
+  if (!docs.every((doc) => doc.currency === targetCurrency)) return null;
   const docWindows = docs.map((doc) => calcWindow(doc, cfg));
 
   const txCandidates = txsInPool.filter((candidate) => {
     if (candidate.id === tx.id) return true;
     if (candidate.tenant_id !== tx.tenant_id) return false;
-    if (candidate.currency !== tx.currency) return false;
-    if (tx.vendor_norm && candidate.vendor_norm && candidate.vendor_norm !== tx.vendor_norm) {
+    if (!txSupportsCurrency(candidate, targetCurrency)) return false;
+    if (
+      tx.vendor_norm &&
+      candidate.vendor_norm &&
+      !vendorCompatible(candidate.vendor_norm, tx.vendor_norm)
+    ) {
       return false;
     }
     if (!candidate.booking_date) return false;
@@ -114,7 +132,10 @@ function buildExactManyToMany(
   if (txCandidates.length < 2) return null;
 
   const sumDocs = docs.reduce((acc, doc) => acc + doc.amount, 0);
-  const sumTxs = txCandidates.reduce((acc, item) => acc + item.amount, 0);
+  const sumTxs = txCandidates.reduce((acc, item) => {
+    const amount = txAmountForCurrency(item, targetCurrency);
+    return amount == null ? acc : acc + amount;
+  }, 0);
   if (!amountCompatible(sumDocs, sumTxs, cfg)) return null;
 
   return {
@@ -136,7 +157,7 @@ export function detectRelationsForDoc(
   cfg: MatchingConfig
 ): RelationSet {
   const candidates = txCands.filter(
-    (tx) => tx.currency === doc.currency && tx.tenant_id === doc.tenant_id
+    (tx) => txSupportsCurrency(tx, doc.currency) && tx.tenant_id === doc.tenant_id
   );
 
   const oneToOne: RelationSet["oneToOne"] = [];
@@ -177,10 +198,11 @@ export function detectRelationsForDoc(
 }
 
 export function groupKeyForCluster(tx: Tx, doc?: Doc): string {
+  const docParty = doc ? docPartyNormForTx(doc, tx) : null;
   const parts = [
     tx.tenant_id,
     tx.currency,
-    safeLower(tx.vendor_norm ?? doc?.vendor_norm),
+    safeLower(tx.vendor_norm ?? docParty),
     canonCompact(tx.iban ?? doc?.iban ?? ""),
   ];
   return parts.join("|");
@@ -191,11 +213,17 @@ export function isPotentialPartialFlow(
   tx: Tx,
   cfg: MatchingConfig
 ): boolean {
+  const txAmount = txAmountForCurrency(tx, docCand.doc.currency);
+  const amountMatch =
+    txAmount == null ? null : resolveDocAmountMatch(docCand.doc, txAmount, cfg);
+  if (amountMatch) return false;
+
   if (docCand.features.partial_keywords) return true;
   if (docCand.features.iban_equal || docCand.features.invoice_no_equal || docCand.features.e2e_equal) {
-    if (!amountCompatible(docCand.doc.amount, tx.amount, cfg)) return true;
+    return true;
   }
-  return tx.amount < docCand.doc.amount;
+  if (txAmount == null) return false;
+  return txAmount < docCand.doc.amount;
 }
 
 export function isPotentialBatchFlow(
@@ -203,18 +231,35 @@ export function isPotentialBatchFlow(
   tx: Tx,
   cfg: MatchingConfig
 ): boolean {
+  const txAmount = txAmountForCurrency(tx, docCand.doc.currency);
+  if (txAmount == null) return false;
   if (docCand.features.partial_keywords) return true;
-  if (!amountCompatible(docCand.doc.amount, tx.amount, cfg)) return true;
+  if (!amountCompatible(docCand.doc.amount, txAmount, cfg)) return true;
   return isBatchKeywordMatch(tx, docCand.doc, cfg);
 }
 
 function isOneToOnePlausible(docCand: DocCandidate, tx: Tx, cfg: MatchingConfig): boolean {
-  if (docCand.doc.currency !== tx.currency) return false;
-  const amountOk = amountCompatible(docCand.doc.amount, tx.amount, cfg);
+  const txAmount = txAmountForCurrency(tx, docCand.doc.currency);
+  if (txAmount == null) return false;
+  const amountOk = Boolean(resolveDocAmountMatch(docCand.doc, txAmount, cfg));
   if (docCand.features.iban_equal && amountOk) return true;
   if (docCand.features.invoice_no_equal && amountOk) return true;
   if (docCand.features.e2e_equal && amountOk) return true;
-  return amountOk && docCand.features.days_delta <= cfg.dateWindowDays;
+  if (amountOk && docCand.features.days_delta <= cfg.dateWindowDays) return true;
+  return isOutOfWindowStrongOneToOne(docCand, tx, cfg);
+}
+
+function isOutOfWindowStrongOneToOne(docCand: DocCandidate, tx: Tx, cfg: MatchingConfig): boolean {
+  if (!Number.isFinite(docCand.features.days_delta)) return false;
+  if (docCand.features.days_delta <= cfg.dateWindowDays) return false;
+  if (!isDirectionCompatible(docCand.doc, tx)) return false;
+  return vendorCompatible(docPartyNormForTx(docCand.doc, tx), tx.vendor_norm);
+}
+
+function isDirectionCompatible(doc: Doc, tx: Tx): boolean {
+  if (doc.amount >= 0 && tx.direction !== "out") return false;
+  if (doc.amount < 0 && tx.direction !== "in") return false;
+  return true;
 }
 
 function findRelatedTxs(doc: Doc, seedTx: Tx, txs: Tx[], cfg: MatchingConfig, limit: number) {
@@ -224,11 +269,12 @@ function findRelatedTxs(doc: Doc, seedTx: Tx, txs: Tx[], cfg: MatchingConfig, li
   for (const tx of txs) {
     if (tx.id === seedTx.id) continue;
     if (tx.tenant_id !== doc.tenant_id) continue;
-    if (tx.currency !== doc.currency) continue;
+    if (!txSupportsCurrency(tx, doc.currency)) continue;
     if (!inWindow(tx.booking_date, window)) continue;
 
     if (doc.iban && tx.iban && canonCompact(doc.iban) !== canonCompact(tx.iban)) continue;
-    if (doc.vendor_norm && tx.vendor_norm && doc.vendor_norm !== tx.vendor_norm) continue;
+    if (!vendorCompatible(docPartyNormForTx(doc, tx), tx.vendor_norm)) continue;
+    if (!vendorCompatible(seedTx.vendor_norm, tx.vendor_norm)) continue;
     if (doc.e2e_id && tx.e2e_id && canonCompact(doc.e2e_id) !== canonCompact(tx.e2e_id)) continue;
 
     related.push(tx);
@@ -258,7 +304,13 @@ function safeLower(s?: string | null) {
 
 function isBatchKeywordMatch(tx: Tx, doc: Doc, cfg: MatchingConfig) {
   const keywords = cfg.keywords ?? DEFAULT_KEYWORDS;
-  const haystack = [tx.text_norm, tx.ref, tx.vendor_norm, doc.text_norm, doc.vendor_norm]
+  const haystack = [
+    tx.text_norm,
+    tx.ref,
+    tx.vendor_norm,
+    doc.text_norm,
+    ...docPartyNorms(doc),
+  ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();

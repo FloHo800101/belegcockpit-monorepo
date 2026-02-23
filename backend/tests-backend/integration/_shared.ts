@@ -2,6 +2,7 @@ import {
   createClient,
   type SupabaseClient as SupabaseClientType,
 } from "npm:@supabase/supabase-js@2";
+import { buildSafeStoragePath, sanitizeStorageKeySegment } from "../../src/documents/storagePath.ts";
 
 export type Json =
   | string
@@ -205,9 +206,29 @@ export function contentTypeForName(fileName: string): string {
 }
 
 export function buildStoragePath(group: string, fileName: string): string {
-  const safeName = fileName.replaceAll("\\", "_").replaceAll("/", "_");
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `tests/analyzes/${group}/${stamp}-${crypto.randomUUID()}/${safeName}`;
+  return buildSafeStoragePath([
+    "tests",
+    "analyzes",
+    group,
+    `${stamp}-${crypto.randomUUID()}`,
+    fileName,
+  ]);
+}
+
+export function sanitizeStorageFileName(fileName: string): string {
+  return sanitizeStorageKeySegment(fileName, "file");
+}
+
+function toHex(buffer: ArrayBuffer): string {
+  return [...new Uint8Array(buffer)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", bytes.slice().buffer);
+  return toHex(digest);
 }
 
 export async function getTestTenantId(
@@ -240,8 +261,20 @@ export async function uploadLocalFile(
 ) {
   const bytes = await Deno.readFile(url);
   const fileName = getFileName(url);
+  return await uploadBytes(supabase, bucket, bytes, fileName, storagePath);
+}
+
+export async function uploadBytes(
+  supabase: SupabaseClient,
+  bucket: string,
+  bytes: Uint8Array,
+  fileName: string,
+  storagePath: string
+) {
   const contentType = contentTypeForName(fileName);
-  const blob = new Blob([bytes], { type: contentType });
+  const safeBytes = new Uint8Array(bytes);
+  const blob = new Blob([safeBytes], { type: contentType });
+  const fileHash = await sha256Hex(bytes);
 
   const { error } = await supabase.storage
     .from(bucket)
@@ -250,7 +283,7 @@ export async function uploadLocalFile(
     throw new Error(`Upload failed for ${fileName}: ${error.message}`);
   }
 
-  return { contentType, size: bytes.byteLength };
+  return { contentType, size: bytes.byteLength, fileHash };
 }
 
 export async function downloadText(
@@ -273,7 +306,7 @@ export async function createDocumentRow(params: {
   originalFilename: string;
   mimeType: string;
   fileSize: number;
-  fileHash?: string | null;
+  fileHash: string;
 }) {
   const {
     supabase,
@@ -283,7 +316,7 @@ export async function createDocumentRow(params: {
     originalFilename,
     mimeType,
     fileSize,
-    fileHash = null,
+    fileHash,
   } =
     params;
   const { data, error } = await (supabase
@@ -301,9 +334,38 @@ export async function createDocumentRow(params: {
     .select("id")
     .single();
   if (error) {
+    if (isUniqueViolation(error)) {
+      const existingId = await findDocumentIdByHash(supabase, tenantId, fileHash);
+      if (existingId) return existingId;
+    }
     throw new Error(`Failed to create document row: ${error.message}`);
   }
   return data.id as string;
+}
+
+async function findDocumentIdByHash(
+  supabase: SupabaseClient,
+  tenantId: string,
+  fileHash: string
+): Promise<string | null> {
+  const { data, error } = await (supabase
+    .from("documents") as any)
+    .select("id")
+    .eq("tenant_id", tenantId)
+    .eq("file_hash", fileHash)
+    .limit(1);
+  if (error) {
+    throw new Error(`Failed to load duplicate document by hash: ${error.message}`);
+  }
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const row = data[0] as { id?: string };
+  return row.id ?? null;
+}
+
+function isUniqueViolation(error: { code?: string | null; message?: string | null }): boolean {
+  if (error.code === "23505") return true;
+  const message = error.message ?? "";
+  return /unique/i.test(message) && /file_hash|documents_tenant_file_hash_unique/i.test(message);
 }
 
 export async function removeFile(

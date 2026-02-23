@@ -1,10 +1,12 @@
 // Run with: pnpm test:azure-mappers/*  */
 
 import {
+  mapAzureBankStatementToParseResult,
   mapAzureInvoiceToParseResult,
   mapAzureLayoutToParseResult,
   mapAzureReceiptToParseResult,
 } from "../../supabase/functions/_shared/azure-mappers.ts";
+import { detectDocumentType } from "../../supabase/functions/_shared/document-type-detection.ts";
 import {
   assert,
   assertClose,
@@ -45,13 +47,14 @@ async function run() {
   await loadEnvFiles();
   const supabase = createSupabaseTestClient();
   type AzureAnalyzeResult = {
+    content?: string;
     documents?: Array<{ fields?: Record<string, any> }>;
     keyValuePairs?: unknown[];
     tables?: unknown[];
   };
 
   let query = (supabase.from(RUNS_TABLE) as any).select(
-    "id, model_id, analyze_result, parsed_data"
+    "id, model_id, analyze_result, parsed_data, storage_path"
   );
   if (!FORCE_REPARSE) {
     query = query.is("parsed_data", null);
@@ -76,6 +79,72 @@ async function run() {
     }
 
     if (modelId === "prebuilt-invoice") {
+      const detectionMeta = detectDocumentType({
+        text: (analyze.content ?? "").toString(),
+        fileName: (run.storage_path as string | null)?.split("/").pop() ?? null,
+        azureResult: analyze,
+      });
+
+      if (detectionMeta.documentType === "bank_statement") {
+        const bankRes = mapAzureBankStatementToParseResult(
+          analyze,
+          (run.storage_path as string | null)?.split("/").pop() ?? null
+        );
+        assertIf(bankRes.parsed, "Bank statement parsed result missing");
+        if (!bankRes.parsed) continue;
+        const parsed = bankRes.parsed;
+        const transactions = parsed.transactions ?? [];
+        assertIf(parsed.documentType === "bank_statement", "Bank statement documentType");
+        assertIf(transactions.length > 0, "Bank statement transactions present");
+
+        const periodYear = parsed.statementPeriod?.to
+          ? Number(parsed.statementPeriod.to.slice(0, 4))
+          : null;
+        if (periodYear && Number.isFinite(periodYear)) {
+          for (const tx of transactions) {
+            const bookingYear = tx.bookingDate ? Number(tx.bookingDate.slice(0, 4)) : Number.NaN;
+            assertIf(bookingYear === periodYear, "Bank tx year follows statement period year");
+          }
+        }
+
+        const mergedCount = Number(
+          (parsed.rawMeta as { mergedCount?: number } | null)?.mergedCount ?? Number.NaN
+        );
+        if (Number.isFinite(mergedCount)) {
+          assertIf(mergedCount === transactions.length, "Bank mergedCount equals tx length");
+        }
+
+        const storagePath = (run.storage_path as string | null) ?? "";
+        if (storagePath.includes("2025-05-digitalwirt-gmbh-7953-hauptkonto-1-statement.pdf")) {
+          assertIf(transactions.length > 34, "Regression: expected >34 transactions for target statement");
+          for (const tx of transactions) {
+            const bookingYear = tx.bookingDate ? Number(tx.bookingDate.slice(0, 4)) : Number.NaN;
+            assertIf(bookingYear === 2025, "Regression: target statement transactions must use year 2025");
+          }
+          const hasForeignCurrency = transactions.some(
+            (tx: any) =>
+              typeof tx.foreignCurrency === "string" &&
+              tx.foreignCurrency.trim().length > 0 &&
+              Number.isFinite(Number(tx.foreignAmount))
+          );
+          assertIf(
+            hasForeignCurrency,
+            "Regression: target statement should include at least one foreign-currency transaction"
+          );
+        }
+
+        const { error: updateError } = await (supabase.from(RUNS_TABLE) as any)
+          .update({
+            parsed_data: parsed,
+            parse_confidence: bankRes.confidence,
+          })
+          .eq("id", run.id);
+        if (updateError) {
+          throw new Error(`Failed to update bank-statement run ${run.id}: ${updateError.message}`);
+        }
+        continue;
+      }
+
       const invoiceRes = mapAzureInvoiceToParseResult(analyze);
       assertIf(invoiceRes.parsed, "Invoice parsed result missing");
       if (!invoiceRes.parsed) continue;

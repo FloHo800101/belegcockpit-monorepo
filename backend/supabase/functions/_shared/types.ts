@@ -13,6 +13,9 @@ export interface ParsedTransaction {
   valueDate?: string | null;
   amount: number;
   currency: string;
+  foreignAmount?: number | null;
+  foreignCurrency?: string | null;
+  exchangeRate?: number | null;
   description: string;
   counterpartyName?: string | null;
   counterpartyIban?: string | null;
@@ -40,6 +43,22 @@ export interface ParsedAddress {
   postalCode?: string | null;
   city?: string | null;
   country?: string | null;
+}
+
+export interface ParsedRawMeta {
+  contentLength?: number;
+  qualityGatePassed?: boolean;
+  extractionPipeline?:
+    | "items"
+    | "statement_lines"
+    | "legacy_lines"
+    | "hybrid_merge"
+    | "none";
+  itemsCount?: number;
+  lineCount?: number;
+  mergedCount?: number;
+  dedupMatchedCount?: number;
+  [key: string]: unknown;
 }
 
 export interface ParsedDocument {
@@ -86,7 +105,7 @@ export interface ParsedDocument {
     pageCount?: number;
     extractedBy?: "azure" | "pdf" | "xml";
   } | null;
-  rawMeta?: Record<string, unknown> | null;
+  rawMeta?: ParsedRawMeta | null;
 }
 
 export interface ProcessResult {
