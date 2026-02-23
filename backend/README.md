@@ -1,4 +1,4 @@
-# belegcockpit
+# belegcockpit-monorepo
 Upload inbox and intelligent matching of documents and bank transactions.
 
 ## Manual Test Setup (hosted Supabase)
