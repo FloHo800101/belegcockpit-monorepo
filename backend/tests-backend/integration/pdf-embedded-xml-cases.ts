@@ -1,5 +1,10 @@
 /// <reference path="../../supabase/functions/deno.d.ts" />
-// Run with: pnpm test:pdf-embedded-xml
+// Run from backend/: pnpm test:pdf-embedded-xml
+//
+// Integrationstest: Nimmt PDF-Dateien aus documents-analyzes/pdf-embedded-xml/, lädt sie
+// in Supabase Storage hoch und extrahiert eingebettete XML-Rechnungsdaten (z.B. ZUGFeRD/
+// Factur-X). Das XML wird geparst und auf Pflichtfelder (Rechnungsnummer, Bruttobetrag)
+// validiert. Ergebnisse werden in document_xml_parse_runs + document_extractions gespeichert.
 
 import { extractEmbeddedXmlFromPdf } from "../../supabase/functions/_shared/pdf-embedded-xml.ts";
 import { parseXmlString } from "../../supabase/functions/_shared/xml-parser.ts";

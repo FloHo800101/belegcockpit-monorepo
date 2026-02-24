@@ -1,5 +1,11 @@
 /// <reference path="../../supabase/functions/deno.d.ts" />
-// Run with: pnpm test:xml-parser
+// Run from backend/: pnpm test:xml-parser
+//
+// Integrationstest: Nimmt XML-Rechnungsdateien (CII, UBL, generisch) aus dem Ordner
+// documents-analyzes/xml-parser/, lädt sie in Supabase Storage hoch und parst sie mit
+// dem XML-Parser. Validiert die geparsten Felder (Rechnungsnummer, Beträge, MwSt-Sätze,
+// Positionen) gegen erwartete Werte pro Testdatei. Ergebnisse werden in
+// document_xml_parse_runs + document_extractions gespeichert.
 
 import { parseXmlString } from "../../supabase/functions/_shared/xml-parser.ts";
 import {

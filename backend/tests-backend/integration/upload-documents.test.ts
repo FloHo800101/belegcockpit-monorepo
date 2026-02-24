@@ -1,5 +1,11 @@
-// How to run:
+// How to run (from backend/):
 // pnpm test:integration
+//
+// Integrationstest (Vitest): Testet den Dokument-Upload gegen eine echte Supabase-Instanz.
+// Erstellt einen temporären Tenant, lädt eine Testdatei hoch und prüft, ob die DB-Zeile
+// korrekt angelegt wurde (Storage-Pfad, Dateigröße, SHA-256-Hash, Status). Testet außerdem
+// die Duplikaterkennung: ein erneuter Upload derselben Datei wird als "reused" erkannt.
+// Räumt alle erstellten Testdaten im finally-Block wieder auf.
 
 import { describe, expect, it } from "vitest";
 import { createClient } from "@supabase/supabase-js";

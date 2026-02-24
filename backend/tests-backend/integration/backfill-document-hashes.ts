@@ -1,7 +1,13 @@
-// How to run:
+// How to run (from backend/):
 // SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... TENANT_ID=... pnpm test:backfill-document-hashes
 // Optional filters: FROM=YYYY-MM-DD TO=YYYY-MM-DD LIMIT_DOCS=...
 // Optional: DRY_RUN=1 (no DB updates)
+//
+// Backfill-Skript: Berechnet SHA-256-Hashes für alle Dokumente in der documents-Tabelle,
+// die noch keinen file_hash haben. Lädt dazu die Datei aus Supabase Storage herunter,
+// berechnet den Hash und schreibt ihn in die DB. Erkennt dabei Duplikate (gleicher Hash
+// innerhalb eines Tenants) und überspringt sie. Mit DRY_RUN=1 werden keine DB-Updates
+// durchgeführt, nur die Ergebnisse geloggt.
 
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";

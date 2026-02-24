@@ -1,6 +1,12 @@
-// How to run:
+// How to run (from backend/):
 // SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... TENANT_ID=... pnpm test:backfill-bank-transactions
 // Optional filters: FROM=YYYY-MM-DD TO=YYYY-MM-DD LIMIT_DOCS=...
+//
+// Backfill-Skript: Liest alle erfolgreich extrahierten Kontoauszüge (bank_statement) aus
+// document_extractions, wandelt die einzelnen Transaktionen in bank_transactions-Zeilen um
+// (Buchungsdatum, Betrag, Währung, Fremdwährung, Gegenseite, Referenz) und schreibt sie
+// per Upsert in die Tabelle bank_transactions. Bestehende Einträge pro Dokument werden
+// vorher gelöscht (Replace-Strategie).
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";

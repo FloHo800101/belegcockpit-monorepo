@@ -1,5 +1,12 @@
 /// <reference path="../../supabase/functions/deno.d.ts" />
-// Run with: pnpm test:backfill-extractions
+// Run from backend/: pnpm test:backfill-extractions
+//
+// Backfill-Skript: Liest alle vorhandenen Azure-Analyze-Ergebnisse aus der Tabelle
+// "document_analyze_runs", erkennt den Dokumenttyp (Rechnung, Beleg, Kontoauszug),
+// mappt das Azure-Ergebnis über die passenden Mapper in ein einheitliches ParseResult
+// und schreibt das Ergebnis per Upsert in die Tabelle "document_extractions".
+// Zweck: Nachträgliches Befüllen der Extractions-Tabelle für Dokumente, die vor
+// Einführung der automatischen Extraktion analysiert wurden.
 
 import {
   createSupabaseTestClient,

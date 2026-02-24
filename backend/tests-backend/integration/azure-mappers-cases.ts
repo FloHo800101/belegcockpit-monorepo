@@ -1,4 +1,10 @@
-// Run with: pnpm test:azure-mappers/*  */
+// Run from backend/: pnpm test:azure-mappers
+//
+// Integrationstest: Liest bestehende Azure-Analyze-Ergebnisse aus document_analyze_runs,
+// wendet die passenden Mapper (Invoice, Receipt, BankStatement, Layout) an und validiert
+// die geparsten Felder (Rechnungsnummer, Beträge, Adressen, MwSt, Transaktionen) gegen
+// die Azure-Rohdaten. Das geparste Ergebnis wird zurück in die DB geschrieben.
+// Mit FORCE_REPARSE=1 werden auch bereits geparste Einträge erneut verarbeitet.
 
 import {
   mapAzureBankStatementToParseResult,
