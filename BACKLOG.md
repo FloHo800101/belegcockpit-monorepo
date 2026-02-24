@@ -1,6 +1,6 @@
 # BelegCockpit – Backlog & Arbeitsstand
 
-> Zuletzt aktualisiert: 2026-02-24
+> Zuletzt aktualisiert: 2026-02-25
 
 ---
 
@@ -22,6 +22,7 @@
 | **run-matching** | Edge Function deployed; Matching Engine als Deno-kompatible `_shared/`-Kopie | Feb 24 |
 | **Storage RLS** | `documents`-Bucket abgesichert: nur eigener Tenant-Ordner (`20260224100000`) | Feb 24 |
 | **Upload-UI** | `MonthSetup.tsx` mit echten File-Inputs, `documentApi.ts`, echte Matching-Ergebnisse | Feb 24 |
+| **Phase 0.3 Rest** | OpenItems, ClusterDetail, UncertainMatches, MandantDashboard auf echte DB-Daten | Feb 25 |
 
 ---
 
@@ -56,10 +57,25 @@ Ziel: PDF-Upload → Azure OCR → Matching → Ergebnis im Frontend – alles m
 - Matching-Ergebnis zeigt echte Zahlen aus `MatchingRunResult` (finalMatches, txCount, suggestedMatches)
 - tsc fehlerfrei, committed + gepusht auf main
 
-### Phase 0.3 – Offene Folgeschritte
-- [ ] OpenItems / ClusterDetail auf echte DB-Daten umstellen (aktuell noch Mock-Store)
+### Phase 0.3 – Status (Feb 25)
+
+#### ✅ Abgeschlossen
+- `mandant_resolution`-Spalte in `bank_transactions` (Migration `20260224110000`)
+- `documentApi.ts`: `loadMonthData`, `resolveTransaction`, `loadProcessedMonths`, `toFrontendMonthId`
+- `belegStore`: `LOAD_TRANSACTIONS`-Action – nach Matching echte Daten laden
+- `MonthSetup.tsx`: ruft nach `runMatching()` direkt `loadMonthData()` auf
+- `MonthSetup.tsx`: dynamische Monatsliste (Jan 2020 bis heute)
+- `ClusterDetail.tsx`: `resolveTransaction()` fire-and-forget bei allen Mandant-Entscheidungen
+- `useWizardNavigation.ts`: dynamisches `monthLabel` (kein hardcodiertes `monthMap` mehr)
+- `UncertainMatches.tsx`: echte `matched_uncertain`-Transaktionen statt Dummy-Daten
+- `MandantDashboard.tsx`: Monate aus DB laden (`loadProcessedMonths`) – neuester Monat oben
+- CORS-Fix in Edge Functions: `apikey` + `x-client-info` in `Access-Control-Allow-Headers`
+- `process-document`: `onConflict: "id"` statt `"document_id"` (PK, kein Composite-Unique-Problem)
+
+#### ⏳ Phase 0.3 – Noch offen (deferred)
 - [ ] Frontend-Typen bereinigen (`Transaction.merchant` → `counterpartyName`, `paymentMethod` entfernen)
-- [ ] MandantDashboard: echte Monatsübersicht aus DB (statt Mock-Statistiken)
+- [ ] Dashboard-Stats pro Monat (Transaktionsanzahl, Auto-Match-Quote) aus DB laden
+- [ ] Abschluss-Seite: echte Zusammenfassung des verarbeiteten Monats
 
 ---
 
@@ -78,7 +94,7 @@ run-matching (Edge Function) ✅
   ├── speichert MatchDecisions → match_groups, match_edges_*
   └── gibt MatchingRunResult zurück
   ↓
-Frontend: zeigt ApiTxView[] an  ← NÄCHSTER SCHRITT
+Frontend: zeigt echte Transaktionen + Cluster ✅
 ```
 
 ### Offene Lücken (nach Gap-Analyse 2026-02-23)
