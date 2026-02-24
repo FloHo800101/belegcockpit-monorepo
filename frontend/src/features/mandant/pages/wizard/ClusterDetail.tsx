@@ -14,6 +14,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useBelegStore } from '@/store/belegStore';
+import { resolveTransaction } from '@/lib/documentApi';
 import { useWizardNavigation } from './hooks/useWizardNavigation';
 import { useEigenbelegDialog } from './WizardLayout';
 import { TransactionInspector, ClusterComplete } from '../../components/TransactionInspector';
@@ -260,6 +261,7 @@ export default function ClusterDetail() {
       type: 'UPDATE_TRANSACTION_STATUS',
       payload: { id: txId, status: 'resolved_self_receipt' },
     });
+    resolveTransaction(txId, 'self_receipt').catch(console.error);
   };
 
   const handleNoReceipt = (txId: string, comment: string) => {
@@ -267,7 +269,7 @@ export default function ClusterDetail() {
       type: 'UPDATE_TRANSACTION_STATUS',
       payload: { id: txId, status: 'resolved_no_receipt' },
     });
-    // Note: In a real app, we'd also save the comment
+    resolveTransaction(txId, 'no_receipt').catch(console.error);
   };
 
   const handleHandover = (txId: string, comment: string) => {
@@ -275,7 +277,7 @@ export default function ClusterDetail() {
       type: 'UPDATE_TRANSACTION_STATUS',
       payload: { id: txId, status: 'resolved_no_receipt' },
     });
-    // Note: In a real app, we'd also save the comment and notify Kanzlei
+    resolveTransaction(txId, 'no_receipt').catch(console.error);
   };
 
   // Refund action handlers
@@ -284,6 +286,7 @@ export default function ClusterDetail() {
       type: 'UPDATE_TRANSACTION_STATUS',
       payload: { id: txId, status: 'matched_confident' },
     });
+    resolveTransaction(txId, 'refund_confirmed').catch(console.error);
   };
 
   const handleOtherReason = (txId: string, reason: string, comment: string) => {
@@ -292,6 +295,7 @@ export default function ClusterDetail() {
       type: 'UPDATE_TRANSACTION_STATUS',
       payload: { id: txId, status: 'matched_confident' },
     });
+    resolveTransaction(txId, 'refund_confirmed').catch(console.error);
   };
 
   // Small amount action handler
@@ -300,6 +304,7 @@ export default function ClusterDetail() {
       type: 'UPDATE_TRANSACTION_STATUS',
       payload: { id: txId, status: 'resolved_no_receipt' },
     });
+    resolveTransaction(txId, 'no_receipt').catch(console.error);
   };
 
   const isRefundCluster = clusterMeta?.clusterType === 'refund';

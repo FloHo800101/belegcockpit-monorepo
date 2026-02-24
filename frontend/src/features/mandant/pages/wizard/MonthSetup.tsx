@@ -14,6 +14,7 @@ import {
   uploadDocument,
   processDocument,
   runMatching,
+  loadMonthData,
   toApiMonthId,
 } from '@/lib/documentApi';
 import type { MatchingRunResult } from '@beleg-cockpit/shared';
@@ -181,6 +182,9 @@ export default function MonthSetup() {
     try {
       const apiMonthId = toApiMonthId(selectedMonth);
       const result = await runMatching(tenantId, apiMonthId);
+      // Echte Transaktionen aus DB laden und in Store einspielen
+      const data = await loadMonthData(tenantId, selectedMonth);
+      dispatch({ type: 'LOAD_TRANSACTIONS', payload: data });
       setMatchingResult(result);
       if (isNewMonth) {
         dispatch({ type: 'WIZARD_COMPLETE_MATCHING' });
