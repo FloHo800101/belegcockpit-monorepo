@@ -18,18 +18,9 @@ import {
 import type { AzureField } from "./azure-field-helpers.ts";
 import { StatementFxHint, withForeignCurrencyInfo } from "./bank-statement-fx.ts";
 
-export function extractCounterpartyName(description: string): string | null {
-  const trimmed = description.trim();
-  if (!trimmed) return null;
-  const cleaned = trimmed.replace(
-    /^(lastschrift|gutschrift|ueberweisung|uberweisung|entgelt|zahlung|zahlg\.?|girosammel|girocard)\s+/i,
-    ""
-  );
-  const normalized = cleaned.trim();
-  return normalized ? normalized : null;
-}
-
 // --- Booking type classification ---
+// Single source of truth for German transaction type keywords.
+// Used by both classifyBookingType() and extractCounterpartyName().
 
 const BOOKING_TYPE_MAP: Array<[RegExp, ParsedTransaction["bookingType"]]> = [
   [/FOLGELASTSCHRIFT|ERSTLASTSCHRIFT|LASTSCHRIFT/i, "direct_debit"],
@@ -37,10 +28,18 @@ const BOOKING_TYPE_MAP: Array<[RegExp, ParsedTransaction["bookingType"]]> = [
   [/GUTSCHRIFT|EINZAHLUNG/i, "transfer"],
   [/ENTGELTABSCHLUSS|ABSCHLUSS/i, "fee"],
   [/ZINSEN|ZINSABSCHLUSS/i, "interest"],
-  [/KARTENZAHLUNG|GIROCARD/i, "card_payment"],
+  [/KARTENZAHLUNG|GIROCARD|GIROSAMMEL/i, "card_payment"],
 ];
 
-const FEE_TYPES = /^(ENTGELTABSCHLUSS|ABSCHLUSS)$/i;
+// Derived prefix pattern for stripping booking type keywords from counterparty descriptions
+const BOOKING_TYPE_PREFIX = new RegExp(
+  "^(" +
+    BOOKING_TYPE_MAP.flatMap(([re]) =>
+      re.source.split("|")
+    ).join("|") +
+    ")\\s+",
+  "i"
+);
 
 export function classifyBookingType(description: string): ParsedTransaction["bookingType"] {
   const upper = normalizeOcrText(description).toUpperCase();
@@ -48,6 +47,13 @@ export function classifyBookingType(description: string): ParsedTransaction["boo
     if (pattern.test(upper)) return type;
   }
   return "unknown";
+}
+
+export function extractCounterpartyName(description: string): string | null {
+  const trimmed = description.trim();
+  if (!trimmed) return null;
+  const cleaned = trimmed.replace(BOOKING_TYPE_PREFIX, "").trim();
+  return cleaned || null;
 }
 
 // --- Reference block parsing ---
@@ -177,28 +183,6 @@ export function isSectionHeader(line: string): boolean {
 
 export function isDateOnlyLine(line: string): boolean {
   return /^\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(line.trim());
-}
-
-export function extractDateTokens(line: string): string[] {
-  return line.match(/\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b/g) ?? [];
-}
-
-export function lineContainsDate(
-  line: string,
-  targetIsoDate: string,
-  referenceYear: number
-): boolean {
-  const normalizedTarget = normalizeDateOnly(targetIsoDate);
-  if (!normalizedTarget) return false;
-
-  const tokens = extractDateTokens(line);
-  for (const token of tokens) {
-    const parsed = parseDateFlexible(token, referenceYear);
-    const normalized = normalizeDateOnly(parsed);
-    if (normalized && normalized === normalizedTarget) return true;
-  }
-
-  return false;
 }
 
 export function lineStartsWithDate(
@@ -470,7 +454,7 @@ export function extractTransactionsFromStatementLines(
       if (firstDescription) descLines.push(firstDescription);
       for (let j = i + 1; j < amountLineIndex; j += 1) {
         const between = lines[j];
-        if (isSectionHeader(between) || isDateOnlyLine(between)) continue;
+        if (isSectionHeader(between) || isDateOnlyLine(between) || isNoiseLine(between)) continue;
         descLines.push(between);
       }
     }

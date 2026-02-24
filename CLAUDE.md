@@ -82,3 +82,19 @@ beleg-cockpit/
 pnpm überall. Kommandos vom Root:
 - `pnpm --filter frontend dev`
 - `pnpm --filter backend test`
+
+## Arbeitsregeln für Claude
+
+### Backend-Änderungen → README aktualisieren
+Bei **jeder** Änderung im Backend (`backend/`) MUSS `backend/tests-backend/README.md` geprüft und ggf. aktualisiert werden:
+- Neue/geänderte Mapper, Parser oder Extraktions-Logik → Abschnitt "What each script does" ergänzen
+- Neue Skripte/Befehle → in "Typical flow" und Befehlsliste aufnehmen
+- Geänderte Architektur (neue Module, umbenannte Dateien) → Dokumentation anpassen
+
+### Refactoring-Prüfung nach jeder Änderung
+Nach Abschluss einer Backend- oder Frontend-Änderung MUSS eine kurze Refactoring-Prüfung durchgeführt werden:
+- Gibt es duplizierte Logik, die konsolidiert werden kann?
+- Gibt es toten Code (ungenutzte Exporte, verwaiste Importe)?
+- Sind Funktionen zu lang oder zu komplex geworden (>50 Zeilen)?
+- Stimmen Namenskonventionen noch (z.B. nach Umbenennung)?
+- Ergebnisse als konkrete Vorschläge an den Benutzer melden (nicht selbstständig umsetzen)
