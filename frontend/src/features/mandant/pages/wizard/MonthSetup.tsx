@@ -18,12 +18,30 @@ import {
 } from '@/lib/documentApi';
 import type { MatchingRunResult } from '@beleg-cockpit/shared';
 
-// Available months for new month selection
-const availableMonths = [
-  { id: 'februar-2026', label: 'Februar 2026' },
-  { id: 'maerz-2026', label: 'März 2026' },
-  { id: 'april-2026', label: 'April 2026' },
+const GERMAN_MONTH_IDS = [
+  'januar', 'februar', 'maerz', 'april', 'mai', 'juni',
+  'juli', 'august', 'september', 'oktober', 'november', 'dezember',
 ];
+const GERMAN_MONTH_LABELS = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+];
+
+// Dynamische Monatsliste: aktueller Monat bis Jan 2020, neueste zuerst
+function generateAvailableMonths() {
+  const months = [];
+  const now = new Date();
+  const endYear = now.getFullYear();
+  const endMonth = now.getMonth(); // 0-indexed
+  for (let year = endYear; year >= 2020; year--) {
+    const fromMonth = year === endYear ? endMonth : 11;
+    for (let m = fromMonth; m >= 0; m--) {
+      months.push({ id: `${GERMAN_MONTH_IDS[m]}-${year}`, label: `${GERMAN_MONTH_LABELS[m]} ${year}` });
+    }
+  }
+  return months;
+}
+const availableMonths = generateAvailableMonths();
 
 export default function MonthSetup() {
   const navigate = useNavigate();

@@ -8,7 +8,7 @@ import { buildInvoiceLineItemRows } from "../_shared/invoice-line-items.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-process-token, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, x-process-token, content-type",
 };
 
 serve(async (req) => {
