@@ -26,7 +26,7 @@ beleg-cockpit/
 - **Paketmanager:** pnpm (vorher bun, migriert)
 - **Stack:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, React Router v6, TanStack Query
 - **Architektur:** Feature-basiert (`mandant/`, `kanzlei/`, `shared/`)
-- **Status:** Aktuell mit Mock-Daten – Backend-Anbindung noch ausstehend
+- **Status:** Phase 0.3 abgeschlossen – alle Wizard-Screens laufen auf echten DB-Daten
 
 ## Rollen
 - **Mandant:** Lädt Belege hoch, prüft Matches, übergibt an Kanzlei
@@ -38,12 +38,33 @@ beleg-cockpit/
 - `/kanzlei` – Übersicht aller Mandanten
 - `/kanzlei/mandant/:id/cluster/:clusterKey` – Cluster-Arbeitsliste
 
-## Offene Aufgaben (Roadmap)
-1. [ ] API Contract / Shared Data Model (Frontend ↔ Backend verbinden)
-2. [ ] Authentifizierung (Supabase Auth ins Frontend integrieren)
-3. [ ] Rollen & Berechtigungen (Mandant vs. Kanzlei)
-4. [ ] Feature Entitlement (welche Features für welche Rolle/Plan)
-5. [ ] Testautomatisierung (Frontend + Backend)
+## Roadmap
+
+### ✅ Abgeschlossen
+- API Contract: `packages/shared/` (ApiTx, ApiDoc, ApiTxView, alle Workflow-Typen)
+- Authentifizierung: Supabase Auth (Login, Register, Logout, AuthContext, ProtectedRoute)
+- Deploy: GitHub Pages live (https://floho800101.github.io/belegcockpit-monorepo/)
+- DB: 18 Migrationen deployed, RLS-Policies für alle Tabellen aktiv
+- **Phase 0.2 Backend komplett** (Feb 24): Edge Functions deployed, Azure DI Secrets gesetzt
+- **Phase 0.3 Frontend-Anbindung komplett** (Feb 25):
+  - Upload-UI mit echten File-Inputs + Matching-Flow
+  - `documentApi.ts`: `uploadDocument`, `processDocument`, `runMatching`, `loadMonthData`, `resolveTransaction`, `loadProcessedMonths`
+  - `belegStore` LOAD_TRANSACTIONS: nach Matching echte Daten laden
+  - `ClusterDetail`: Mandant-Entscheidungen in DB persistiert (`mandant_resolution`)
+  - `UncertainMatches`: echte `matched_uncertain`-Transaktionen
+  - `MandantDashboard`: Monate dynamisch aus DB
+  - CORS-Fix + `onConflict`-Fix in Edge Functions
+
+### 🟡 Nächstes – Phase 0.3 Deferred / Phase 1
+- [ ] Frontend-Typen bereinigen (`Transaction.merchant` → `counterpartyName` etc.)
+- [ ] Abschluss-Seite mit echter Monats-Zusammenfassung
+- [ ] Kanzlei-Registrierung, Invite-Flow, Stripe
+
+### ⏳ Phase 1 (nach Pilot)
+- Kanzlei-Registrierung, Invite-Flow, Stripe
+- RoleSwitcher durch echte Supabase-Rolle ersetzen
+
+→ Vollständiges Backlog mit Details: BACKLOG.md
 
 ## Git-Workflow (in Diskussion)
 - Strategie: GitHub Flow (Feature-Branches + PR in main)
