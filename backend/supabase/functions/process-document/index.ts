@@ -223,7 +223,7 @@ async function upsertInvoice(params: {
 
   const { error } = await supabase
     .from("invoices")
-    .upsert(row, { onConflict: "document_id" });
+    .upsert(row, { onConflict: "id" });
   if (error) {
     throw new Error(`Failed to upsert invoices: ${error.message}`);
   }

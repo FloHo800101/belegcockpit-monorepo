@@ -103,7 +103,15 @@ export async function processDocument(documentId: string): Promise<void> {
   const { error } = await supabase.functions.invoke('process-document', {
     body: { documentId },
   });
-  if (error) throw new Error(`OCR-Verarbeitung fehlgeschlagen: ${error.message}`);
+  if (error) {
+    // FunctionsHttpError enthält den Response-Body in error.context
+    let detail = error.message;
+    try {
+      const body = await (error as any).context?.json?.();
+      if (body?.error) detail = body.error;
+    } catch { /* Body bereits konsumiert oder kein JSON */ }
+    throw new Error(`OCR-Verarbeitung fehlgeschlagen: ${detail}`);
+  }
 }
 
 /**
