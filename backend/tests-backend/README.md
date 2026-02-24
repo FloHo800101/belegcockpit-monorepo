@@ -1,6 +1,7 @@
 # Backend Integration Runbook
 
 Short guide for local backfills and parsing on the hosted Supabase database.
+Run all commands below from `backend/`.
 
 ## Environment
 

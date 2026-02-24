@@ -11,6 +11,7 @@ build/
 .env.local
 .env.*.local
 .env.live.local
+.npmrc
 
 # Supabase
 supabase/.branches
@@ -29,6 +30,7 @@ tests/output/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 # Logs
 *.log

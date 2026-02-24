@@ -1,6 +1,11 @@
-// How to run:
+// How to run (from backend/):
 // SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... TENANT_ID=... pnpm test:backfill-invoices
 // Optional filters: FROM=YYYY-MM-DD TO=YYYY-MM-DD LIMIT_DOCS=...
+//
+// Backfill-Skript: Liest alle erfolgreich extrahierten Rechnungen/Belege aus document_extractions
+// und erzeugt daraus Zeilen in der invoices-Tabelle (Betrag, Datum, Rechnungsnummer, Vendor,
+// IBAN, Einzelpositionen usw.). Bestehende Einträge werden per Upsert aktualisiert.
+// Zusätzlich werden invoice_line_items pro Rechnung neu geschrieben.
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";

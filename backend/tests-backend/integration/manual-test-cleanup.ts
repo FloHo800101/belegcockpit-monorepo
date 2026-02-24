@@ -1,5 +1,10 @@
-// How to run (from repo root):
+// How to run (from backend/):
 // pnpm test:manual:cleanup
+//
+// Cleanup-Skript für manuelle Tests: Liest die State-Datei aus dem Setup-Schritt und
+// entfernt alle erstellten Testdaten – Storage-Dateien, Dokument-Zeilen, Membership,
+// Tenant und Auth-User – aus der Live-Supabase-Instanz. Löscht anschließend die
+// State-Datei selbst.
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";

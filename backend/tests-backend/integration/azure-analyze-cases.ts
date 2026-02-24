@@ -1,6 +1,12 @@
 /// <reference path="../../supabase/functions/deno.d.ts" />
-// Run with: /* pnpm test:azure-analyze */
+// Run from backend/: pnpm test:azure-analyze
 // Reprocess existing files: FORCE_REPROCESS=1 pnpm test:azure-analyze
+//
+// Integrationstest: Nimmt PDF/Bilddateien aus dem Ordner documents-analyzes/azure-analyze/,
+// lädt sie in Supabase Storage hoch und schickt sie an Azure Document Intelligence.
+// Das Ergebnis wird per Dokumenttyp-Erkennung klassifiziert (Rechnung, Beleg, Kontoauszug),
+// mit dem passenden Mapper geparst und in document_analyze_runs + document_extractions gespeichert.
+// Verschlüsselte PDFs werden bei Bedarf per qpdf entschlüsselt, Duplikate per Hash erkannt.
 
 import { analyzeWithAzure } from "../../supabase/functions/_shared/azure-analyze.ts";
 import {

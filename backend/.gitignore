@@ -141,3 +141,4 @@ tests-backend/manual/test-upload-state.json
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+tests-backend/documents-analyzes/azure-analyze/

@@ -1,5 +1,10 @@
-// How to run (from repo root):
+// How to run (from backend/):
 // pnpm test:manual:setup
+//
+// Setup-Skript für manuelle Tests: Erstellt einen neuen Auth-User und Tenant in der
+// Live-Supabase-Instanz, lädt alle Testdokumente aus tests-backend/documents/ hoch
+// und speichert den erstellten State (tenantId, userId, documentIds) in einer JSON-Datei,
+// damit der Cleanup diese Ressourcen später wieder entfernen kann.
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";

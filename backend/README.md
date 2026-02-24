@@ -1,5 +1,7 @@
-# belegcockpit
+# belegcockpit-monorepo
 Upload inbox and intelligent matching of documents and bank transactions.
+
+Run all commands below from `backend/`.
 
 ## Manual Test Setup (hosted Supabase)
 
