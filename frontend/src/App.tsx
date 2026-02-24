@@ -4,7 +4,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { BelegProvider } from "@/store/belegStore";
+import { AuthProvider } from "@/context/AuthContext";
+import ProtectedRoute from "@/components/ProtectedRoute";
 import Landing from "./pages/Landing";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
 
 // Mandant feature
@@ -14,13 +18,13 @@ import MandantMeineDaten from "@/features/mandant/pages/MandantMeineDaten";
 import MandantUebergabe from "@/features/mandant/pages/MandantUebergabe";
 
 // Mandant Wizard (URL-based routing)
-import { 
-  WizardLayout, 
-  MonthSetup, 
-  OpenItems, 
-  ClusterDetail, 
-  UncertainMatches, 
-  Completion 
+import {
+  WizardLayout,
+  MonthSetup,
+  OpenItems,
+  ClusterDetail,
+  UncertainMatches,
+  Completion
 } from "@/features/mandant/pages/wizard";
 import ReviewDetail from "@/features/mandant/pages/wizard/ReviewDetail";
 import TestProgressiveDisclosure from "@/features/mandant/pages/TestProgressiveDisclosure";
@@ -41,68 +45,75 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <BelegProvider>
-      <InquiryPackageProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter basename={import.meta.env.BASE_URL}>
-            <Routes>
-              <Route path="/" element={<Landing />} />
-              
-              {/* Mandant Routes */}
-              <Route path="/mandant" element={<MandantLayout />}>
-                <Route index element={<MandantDashboard />} />
-                <Route path="meine-daten" element={<MandantMeineDaten />} />
-              </Route>
-              
-              {/* New Month Setup - direct to setup page */}
-              <Route path="/mandant/monat/neu" element={<WizardLayout />}>
-                <Route index element={<MonthSetup />} />
-              </Route>
-              
-              {/* Mandant Wizard with URL-based routing */}
-              <Route path="/mandant/monat/:monthId" element={<WizardLayout />}>
-                <Route index element={<Navigate to="offene-punkte" replace />} />
-                <Route path="setup" element={<MonthSetup />} />
-                <Route path="offene-punkte" element={<OpenItems />} />
-                <Route path="offene-punkte/:clusterId" element={<ClusterDetail />} />
-                <Route path="offene-punkte/review" element={<ReviewDetail />} />
-                <Route path="unsichere-matches" element={<UncertainMatches />} />
-                <Route path="abschluss" element={<Completion />} />
-              </Route>
-              
-              <Route path="/mandant/uebergabe/:monthId" element={<MandantUebergabe />} />
-              
-              {/* Test: Progressive Disclosure Screen */}
-              <Route path="/mandant/test-progressive-disclosures" element={<TestProgressiveDisclosure />} />
-              
-              {/* Legacy route redirect */}
-              <Route path="/mandant-wizard" element={<Navigate to="/mandant/monat/januar-2026/offene-punkte" replace />} />
-              
-              {/* Kanzlei Routes - All under unified KanzleiLayout */}
-              <Route path="/kanzlei" element={<KanzleiLayout />}>
-                <Route index element={<Navigate to="mandanten-uebersicht" replace />} />
-                <Route path="mandanten-uebersicht" element={<KanzleiCockpit />} />
-                <Route path="arbeitskorb" element={<Arbeitskorb />} />
-                
-                {/* Legacy mandant routes */}
-                <Route path="mandant/:id" element={<MandantDetail />} />
-                <Route path="mandant/:id/cluster/:clusterKey" element={<ClusterWorklist />} />
-                <Route path="mandant/:id/risk" element={<RiskQueue />} />
-                
-                {/* SFA Workbench routes */}
-                <Route path="mandant/:mandantId/monat/:monthId/cluster/:queueId" element={<ClusterWorkbench />} />
-                <Route path="mandant/:mandantId/monat/:monthId/rueckfragen" element={<InquiryPackageScreen />} />
-                <Route path="mandant/:mandantId/monat/:monthId/abschluss" element={<MonthClosingScreen />} />
-              </Route>
-              
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </TooltipProvider>
-      </InquiryPackageProvider>
-    </BelegProvider>
+    <AuthProvider>
+      <BelegProvider>
+        <InquiryPackageProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter basename={import.meta.env.BASE_URL}>
+              <Routes>
+                {/* Öffentliche Routes */}
+                <Route path="/login" element={<Login />} />
+                <Route path="/register" element={<Register />} />
+
+                {/* Geschützte Routes */}
+                <Route path="/" element={<ProtectedRoute><Landing /></ProtectedRoute>} />
+
+                {/* Mandant Routes */}
+                <Route path="/mandant" element={<ProtectedRoute><MandantLayout /></ProtectedRoute>}>
+                  <Route index element={<MandantDashboard />} />
+                  <Route path="meine-daten" element={<MandantMeineDaten />} />
+                </Route>
+
+                {/* New Month Setup - direct to setup page */}
+                <Route path="/mandant/monat/neu" element={<ProtectedRoute><WizardLayout /></ProtectedRoute>}>
+                  <Route index element={<MonthSetup />} />
+                </Route>
+
+                {/* Mandant Wizard with URL-based routing */}
+                <Route path="/mandant/monat/:monthId" element={<ProtectedRoute><WizardLayout /></ProtectedRoute>}>
+                  <Route index element={<Navigate to="offene-punkte" replace />} />
+                  <Route path="setup" element={<MonthSetup />} />
+                  <Route path="offene-punkte" element={<OpenItems />} />
+                  <Route path="offene-punkte/:clusterId" element={<ClusterDetail />} />
+                  <Route path="offene-punkte/review" element={<ReviewDetail />} />
+                  <Route path="unsichere-matches" element={<UncertainMatches />} />
+                  <Route path="abschluss" element={<Completion />} />
+                </Route>
+
+                <Route path="/mandant/uebergabe/:monthId" element={<ProtectedRoute><MandantUebergabe /></ProtectedRoute>} />
+
+                {/* Test: Progressive Disclosure Screen */}
+                <Route path="/mandant/test-progressive-disclosures" element={<ProtectedRoute><TestProgressiveDisclosure /></ProtectedRoute>} />
+
+                {/* Legacy route redirect */}
+                <Route path="/mandant-wizard" element={<Navigate to="/mandant/monat/januar-2026/offene-punkte" replace />} />
+
+                {/* Kanzlei Routes - All under unified KanzleiLayout */}
+                <Route path="/kanzlei" element={<ProtectedRoute><KanzleiLayout /></ProtectedRoute>}>
+                  <Route index element={<Navigate to="mandanten-uebersicht" replace />} />
+                  <Route path="mandanten-uebersicht" element={<KanzleiCockpit />} />
+                  <Route path="arbeitskorb" element={<Arbeitskorb />} />
+
+                  {/* Legacy mandant routes */}
+                  <Route path="mandant/:id" element={<MandantDetail />} />
+                  <Route path="mandant/:id/cluster/:clusterKey" element={<ClusterWorklist />} />
+                  <Route path="mandant/:id/risk" element={<RiskQueue />} />
+
+                  {/* SFA Workbench routes */}
+                  <Route path="mandant/:mandantId/monat/:monthId/cluster/:queueId" element={<ClusterWorkbench />} />
+                  <Route path="mandant/:mandantId/monat/:monthId/rueckfragen" element={<InquiryPackageScreen />} />
+                  <Route path="mandant/:mandantId/monat/:monthId/abschluss" element={<MonthClosingScreen />} />
+                </Route>
+
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </TooltipProvider>
+        </InquiryPackageProvider>
+      </BelegProvider>
+    </AuthProvider>
   </QueryClientProvider>
 );
 

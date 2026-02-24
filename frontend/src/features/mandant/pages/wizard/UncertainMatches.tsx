@@ -3,8 +3,7 @@ import { Check, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useWizardNavigation } from './hooks/useWizardNavigation';
-import { initialReviewItems } from '@/data/mockData';
-import { ReviewItem } from '@/data/types';
+import { ReviewItem, ReviewReason, Transaction, Document } from '@/data/types';
 import { DetailPageShell } from '@/features/mandant/components/DetailPageShell';
 import { ReviewInspector, ReviewClusterComplete } from '@/features/mandant/components/ReviewInspector';
 import { CommentDialog } from '@/features/mandant/components/CommentDialog';
@@ -59,142 +58,51 @@ const getReviewLabel = (item: ReviewItem): string => {
   return 'Name unsicher';
 };
 
-// Convert ReviewItems to MatchCandidates
-const initializeMatchCandidates = (): MatchCandidate[] => {
-  // Extend with more mock items for 10-15+ items
-  const extendedItems: ReviewItem[] = [
-    ...initialReviewItems,
-    {
-      id: 'review009',
-      transactionId: 'txGen050',
-      transactionDate: '2026-01-22',
-      transactionAmount: -156.80,
-      transactionMerchant: 'BÜROMARKT BÖTTCHER',
-      transactionPurpose: 'Kartenzahlung Büromarkt Böttcher',
-      documentId: 'docBuero001',
-      documentName: 'Böttcher AG',
-      documentDate: '2026-01-21',
-      documentAmount: 156.80,
-      confidence: 75,
-      reviewReason: 'low_confidence',
+// Build MatchCandidates from real store data
+const buildMatchCandidates = (
+  uncertainTxs: Transaction[],
+  getDocById: (id: string) => Document | undefined,
+): MatchCandidate[] => {
+  return uncertainTxs.map(tx => {
+    const docId = tx.candidateDocumentIds?.[0] ?? '';
+    const doc = docId ? getDocById(docId) : undefined;
+
+    const docAmount = doc?.total ?? Math.abs(tx.amount);
+    const docDate = doc?.date ?? tx.date;
+    const docName = doc?.supplierName ?? 'Unbekannter Lieferant';
+
+    const amountDelta = Math.abs(Math.abs(tx.amount) - docAmount);
+    const txDateMs = new Date(tx.date).getTime();
+    const docDateMs = new Date(docDate).getTime();
+    const daysDiff = Math.abs(Math.round((txDateMs - docDateMs) / (1000 * 60 * 60 * 24)));
+
+    const reviewReason: ReviewReason =
+      amountDelta > 0.01 ? 'amount_deviation'
+      : daysDiff > 1 ? 'date_deviation'
+      : 'low_confidence';
+
+    const item: ReviewItem = {
+      id: tx.id,
+      transactionId: tx.id,
+      transactionDate: tx.date,
+      transactionAmount: tx.amount,
+      transactionMerchant: tx.merchant,
+      transactionPurpose: tx.purpose ?? '',
+      documentId: docId,
+      documentName: docName,
+      documentDate: docDate,
+      documentAmount: docAmount,
+      confidence: tx.matchConfidence,
+      reviewReason,
       status: 'pending',
-    },
-    {
-      id: 'review010',
-      transactionId: 'txGen051',
-      transactionDate: '2026-01-25',
-      transactionAmount: -45.90,
-      transactionMerchant: 'SHELL TANKSTELLE',
-      transactionPurpose: 'Kartenzahlung Shell Station 4521',
-      documentId: 'docShell001',
-      documentName: 'Shell Deutschland GmbH',
-      documentDate: '2026-01-25',
-      documentAmount: 45.90,
-      confidence: 88,
-      reviewReason: 'low_confidence',
-      status: 'pending',
-    },
-    {
-      id: 'review011',
-      transactionId: 'txGen052',
-      transactionDate: '2026-01-27',
-      transactionAmount: -289.00,
-      transactionMerchant: 'IKEA HAMBURG',
-      transactionPurpose: 'Kartenzahlung IKEA Hamburg Altona',
-      documentId: 'docIkea001',
-      documentName: 'IKEA Deutschland GmbH',
-      documentDate: '2026-01-26',
-      documentAmount: 299.00,
-      confidence: 68,
-      reviewReason: 'amount_deviation',
-      deviationDetails: 'Betrag weicht um 10 € ab',
-      status: 'pending',
-    },
-    {
-      id: 'review012',
-      transactionId: 'txGen053',
-      transactionDate: '2026-01-15',
-      transactionAmount: -67.50,
-      transactionMerchant: 'MEDIAMARKT ONLINE',
-      transactionPurpose: 'Kartenzahlung MediaMarkt Online',
-      documentId: 'docMedia001',
-      documentName: 'MediaMarkt Online',
-      documentDate: '2026-01-12',
-      documentAmount: 67.50,
-      confidence: 72,
-      reviewReason: 'date_deviation',
-      deviationDetails: 'Belegdatum 3 Tage vor Zahlung',
-      status: 'pending',
-    },
-    {
-      id: 'review013',
-      transactionId: 'txGen054',
-      transactionDate: '2026-01-18',
-      transactionAmount: -34.99,
-      transactionMerchant: 'DROGERIE MUELLER',
-      transactionPurpose: 'Kartenzahlung Müller Drogeriemarkt',
-      documentId: 'docMueller001',
-      documentName: 'Müller Ltd. & Co. KG',
-      documentDate: '2026-01-18',
-      documentAmount: 34.99,
-      confidence: 65,
-      reviewReason: 'low_confidence',
-      status: 'pending',
-    },
-    {
-      id: 'review014',
-      transactionId: 'txGen055',
-      transactionDate: '2026-01-20',
-      transactionAmount: -178.00,
-      transactionMerchant: 'SATURN ELECTRONICS',
-      transactionPurpose: 'Kartenzahlung Saturn Elektronik',
-      documentId: 'docSaturn001',
-      documentName: 'Saturn Electro',
-      documentDate: '2026-01-19',
-      documentAmount: 189.00,
-      confidence: 58,
-      reviewReason: 'amount_deviation',
-      deviationDetails: 'Betrag weicht um 11 € ab',
-      status: 'pending',
-    },
-    {
-      id: 'review015',
-      transactionId: 'txGen056',
-      transactionDate: '2026-01-23',
-      transactionAmount: -55.00,
-      transactionMerchant: 'STADTWERKE PINNEBERG',
-      transactionPurpose: 'SEPA-LASTSCHRIFT Stadtwerke Pinneberg',
-      documentId: 'docStadt001',
-      documentName: 'Stadtwerke Pinneberg GmbH',
-      documentDate: '2026-01-22',
-      documentAmount: 55.00,
-      confidence: 91,
-      reviewReason: 'low_confidence',
-      status: 'pending',
-    },
-    {
-      id: 'review016',
-      transactionId: 'txGen057',
-      transactionDate: '2026-01-28',
-      transactionAmount: -412.50,
-      transactionMerchant: 'HORNBACH BAUMARKT',
-      transactionPurpose: 'Kartenzahlung Hornbach Baumarkt',
-      documentId: 'docHornbach001',
-      documentName: 'Hornbach Baumarkt AG',
-      documentDate: '2026-01-27',
-      documentAmount: 425.00,
-      confidence: 64,
-      reviewReason: 'amount_deviation',
-      deviationDetails: 'Betrag weicht um 12,50 € ab',
-      status: 'pending',
-    },
-  ];
-  
-  return extendedItems.map(item => ({
-    ...item,
-    reviewLabel: getReviewLabel(item),
-    matchStatus: 'TO_REVIEW' as const
-  }));
+    };
+
+    return {
+      ...item,
+      reviewLabel: getReviewLabel(item),
+      matchStatus: 'TO_REVIEW' as const,
+    };
+  });
 };
 
 // Confidence badge component
@@ -218,11 +126,14 @@ const PACKAGE_KEYS = ['top_amounts', 'other_open', 'bundles', 'subscriptions', '
 export default function UncertainMatches() {
   const [currentPage, setCurrentPage] = useState(0);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-  const [matchCandidates, setMatchCandidates] = useState<MatchCandidate[]>(() => initializeMatchCandidates());
   const [handoverDialogOpen, setHandoverDialogOpen] = useState(false);
   const [showMonthHandoverDialog, setShowMonthHandoverDialog] = useState(false);
   const { goToOpenItemsHandler, goToCompletion } = useWizardNavigation();
-  const { packageCounts } = useBelegStore();
+  const { packageCounts, getUncertainTransactions, getDocumentById } = useBelegStore();
+
+  const [matchCandidates, setMatchCandidates] = useState<MatchCandidate[]>(() =>
+    buildMatchCandidates(getUncertainTransactions(), getDocumentById)
+  );
 
   // Calculate total open items (same logic as OpenItems.tsx)
   const openItemsCount = PACKAGE_KEYS.reduce((sum, key) => sum + (packageCounts[key] || 0), 0);

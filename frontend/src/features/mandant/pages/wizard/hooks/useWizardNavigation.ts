@@ -87,18 +87,16 @@ export function useWizardNavigation() {
     }
   }, [currentStep]);
 
-  // Format month label from ID
-  const getMonthLabel = (id: string | undefined) => {
+  // Format month label from ID – dynamisch für beliebige Monate
+  const GERMAN_IDS = ['januar','februar','maerz','april','mai','juni','juli','august','september','oktober','november','dezember'];
+  const GERMAN_LABELS = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+  const getMonthLabel = (id: string | undefined): string => {
     if (!id) return 'Monat';
-    const monthMap: Record<string, string> = {
-      'januar-2026': 'Januar 2026',
-      'dezember-2025': 'Dezember 2025',
-      'november-2025': 'November 2025',
-      'februar-2026': 'Februar 2026',
-      'maerz-2026': 'März 2026',
-      'april-2026': 'April 2026',
-    };
-    return monthMap[id] || id.replace('-', ' ').replace(/^\w/, c => c.toUpperCase());
+    const parts = id.split('-');
+    const year = parts[parts.length - 1];
+    const key = parts.slice(0, -1).join('-');
+    const idx = GERMAN_IDS.indexOf(key);
+    return idx >= 0 ? `${GERMAN_LABELS[idx]} ${year}` : id;
   };
 
   const monthLabel = getMonthLabel(monthId);

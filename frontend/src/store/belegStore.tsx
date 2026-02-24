@@ -32,7 +32,8 @@ type BelegAction =
   | { type: 'WIZARD_UPLOAD_KREDITKARTE' }
   | { type: 'WIZARD_UPLOAD_BELEGE' }
   | { type: 'WIZARD_COMPLETE_MATCHING' }
-  | { type: 'WIZARD_RESET' };
+  | { type: 'WIZARD_RESET' }
+  | { type: 'LOAD_TRANSACTIONS'; payload: { transactions: Transaction[]; documents: Document[] } };
 
 // Initial state
 const initialState: BelegState = {
@@ -140,7 +141,14 @@ function belegReducer(state: BelegState, action: BelegAction): BelegState {
           matchingComplete: false
         }
       };
-    
+
+    case 'LOAD_TRANSACTIONS':
+      return {
+        ...state,
+        transactions: action.payload.transactions,
+        documents: action.payload.documents,
+      };
+
     default:
       return state;
   }
