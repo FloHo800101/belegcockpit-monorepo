@@ -18,10 +18,12 @@
 | **Gap-Analyse** | Datenfluss DB → Engine → shared → Frontend vollständig analysiert | Feb 23 |
 | **Migrationen** | 18 Migrationen bereits im Live-Projekt (waren schon deployed) | Feb 24 |
 | **RLS** | Row Level Security für alle Tabellen deployed (`20260224090000_add_rls_policies.sql`) | Feb 24 |
+| **process-document** | Edge Function deployed; Azure DI Secrets gesetzt | Feb 24 |
+| **run-matching** | Edge Function deployed; Matching Engine als Deno-kompatible `_shared/`-Kopie | Feb 24 |
 
 ---
 
-## Phase 0.2 – Backend-Anbindung (IN ARBEIT)
+## Phase 0.2 – Backend-Anbindung (ABGESCHLOSSEN ✅)
 
 Ziel: PDF-Upload → Azure OCR → Matching → Ergebnis im Frontend – alles mit echten Daten.
 
@@ -33,24 +35,17 @@ Ziel: PDF-Upload → Azure OCR → Matching → Ergebnis im Frontend – alles m
 - Hilfsfunktion `get_my_tenant_ids()` über `memberships`-Tabelle
 - Alle 13 Tabellen mit `tenant_id` abgesichert; system-Tabellen komplett gesperrt
 
-### 🟡 Schritt 3 – `process-document` Edge Function deployen
-- Die Funktion existiert bereits in `backend/supabase/functions/process-document/`
-- [ ] **Azure Document Intelligence Key als Supabase Secret setzen** ← WARTET AUF KEY
-  ```bash
-  supabase secrets set AZURE_DI_ENDPOINT=https://... AZURE_DI_KEY=...
-  ```
-- [ ] `supabase functions deploy process-document`
+### ✅ Schritt 3 – `process-document` Edge Function deployen
+- Funktion existiert in `backend/supabase/functions/process-document/`
+- Azure Document Intelligence Secrets gesetzt (`AZURE_DOCINT_ENDPOINT`, `AZURE_DOCINT_KEY`)
+- `supabase functions deploy process-document` erfolgreich
 
-### Schritt 4 – `run-matching` Edge Function bauen
-- Die Funktion fehlt noch komplett
-- Aufgabe: HTTP-Trigger → lädt Tx[] + Doc[] aus DB → ruft `run_pipeline()` → speichert Ergebnis
-- **Kritisch:** Adapter-Layer `PipelineResult → ApiTxView[]` muss hier implementiert werden
-  - `MatchDecision.state` + `confidence` → `TransactionStatus`
-  - `TxLifecycleResult.kind` → `MandantPackageKey`
-  - `MatchRelationType` → `KanzleiCluster`
-- Zuständig: **Tilov**
-- Input: `{ tenantId: string, monthId: string }`
-- Output: `MatchingRunResult` (aus `packages/shared`)
+### ✅ Schritt 4 – `run-matching` Edge Function
+- `backend/supabase/functions/run-matching/index.ts` implementiert
+- Matching Engine kopiert nach `_shared/matching-engine/` (Deno-kompatibel: `.ts`-Extensions)
+- `SupabaseMatchRepository` implementiert `MatchRepository`-Interface
+- Input: `{ tenantId, monthId }` → Output: `MatchingRunResult`
+- `supabase functions deploy run-matching` erfolgreich
 
 ### Schritt 5 – Frontend Upload-UI
 - [ ] PDF-Upload-Komponente (Bankauszug + Belege)
@@ -68,26 +63,25 @@ PDF-Upload (Frontend)
   ↓
 Supabase Storage
   ↓
-process-document (Edge Function) → Azure Document Intelligence → DB: documents / bank_transactions
+process-document (Edge Function) ✅ → Azure Document Intelligence → DB: documents / bank_transactions
   ↓
-run-matching (Edge Function) [FEHLT NOCH]
+run-matching (Edge Function) ✅
   ├── lädt Tx[] + Doc[] aus DB
   ├── ruft run_pipeline()
   ├── speichert MatchDecisions → match_groups, match_edges_*
-  └── berechnet ApiTxView[] → gibt MatchingRunResult zurück
+  └── gibt MatchingRunResult zurück
   ↓
-Frontend: zeigt ApiTxView[] an
+Frontend: zeigt ApiTxView[] an  ← NÄCHSTER SCHRITT
 ```
 
-### Bekannte Lücken (Gap-Analyse 2026-02-23)
+### Offene Lücken (nach Gap-Analyse 2026-02-23)
 
-| # | Lücke | Wo lösen |
+| # | Lücke | Status |
 |---|---|---|
-| 1 | `run-matching` Edge Function fehlt | `backend/supabase/functions/run-matching/` |
-| 2 | API-Adapter `PipelineResult → ApiTxView[]` fehlt | In `run-matching` |
-| 3 | RLS Policies fehlen | Neue Migration |
-| 4 | Frontend `Transaction.merchant` → API `counterpartyName` (Rename nötig) | Frontend |
-| 5 | Frontend `Transaction.paymentMethod` → kein API-Gegenstück | Frontend anpassen |
+| 1 | `run-matching` Edge Function | ✅ Deployed |
+| 2 | RLS Policies | ✅ Deployed |
+| 3 | Frontend `Transaction.merchant` → API `counterpartyName` (Rename) | ⏳ Schritt 5 |
+| 4 | Frontend `Transaction.paymentMethod` → kein API-Gegenstück | ⏳ Schritt 5 |
 
 ### Was bereits passt ✅
 
@@ -95,6 +89,16 @@ Frontend: zeigt ApiTxView[] an
 - `ApiTx` / `ApiDoc` → vollständig definierter camelCase-Contract
 - `ApiTxView` hat alle Felder die das Frontend braucht: `status`, `mandantPackageKey`, `kanzleiCluster`
 - Alle Workflow-Typen in `packages/shared`: `TransactionStatus`, `MandantPackageKey`, `KanzleiCluster`, `SfaQueueId` → **vollständig**
+
+---
+
+## Landingpage (parallel / low priority)
+
+- [ ] Entscheidung: Lovable-Export übernehmen oder neu aufbauen
+- [ ] Stack: Astro oder Vite+React; Deployment auf `belegcockpit.de` via Vercel
+- [ ] Warteliste: E-Mail-Sammlung → Supabase `waitlist`-Tabelle oder Tally.so
+- [ ] Impressum + Datenschutz (DSGVO-Pflicht)
+- Verzeichnis: `landing/` im Monorepo
 
 ---
 

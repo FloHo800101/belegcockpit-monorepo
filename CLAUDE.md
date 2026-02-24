@@ -26,7 +26,7 @@ beleg-cockpit/
 - **Paketmanager:** pnpm (vorher bun, migriert)
 - **Stack:** React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, React Router v6, TanStack Query
 - **Architektur:** Feature-basiert (`mandant/`, `kanzlei/`, `shared/`)
-- **Status:** Aktuell mit Mock-Daten – Backend-Anbindung noch ausstehend
+- **Status:** Aktuell mit Mock-Daten – Backend-Anbindung (Phase 0.2) abgeschlossen, Frontend-Anbindung folgt (Schritt 5)
 
 ## Rollen
 - **Mandant:** Lädt Belege hoch, prüft Matches, übergibt an Kanzlei
@@ -45,11 +45,13 @@ beleg-cockpit/
 - Authentifizierung: Supabase Auth (Login, Register, Logout, AuthContext, ProtectedRoute)
 - Deploy: GitHub Pages live (https://floho800101.github.io/belegcockpit-monorepo/)
 - DB: 18 Migrationen deployed, RLS-Policies für alle Tabellen aktiv
+- **Phase 0.2 Backend komplett** (Feb 24):
+  - `process-document` Edge Function deployed (Azure DI Secrets gesetzt)
+  - `run-matching` Edge Function deployed (Matching Engine als Deno-`_shared/`-Kopie)
 
-### 🟡 In Arbeit – Phase 0.2 Backend-Anbindung
-- [ ] `process-document` Edge Function deployen (Azure DI Key benötigt)
-- [ ] `run-matching` Edge Function bauen (PipelineResult → ApiTxView[] Adapter)
-- [ ] Frontend Upload-UI (PDF → Storage → OCR → Matching → Anzeige)
+### 🟡 In Arbeit – Phase 0.3 Frontend-Anbindung
+- [ ] Frontend Upload-UI (PDF → Supabase Storage → `process-document` → `run-matching` → Anzeige)
+- [ ] Frontend-Typen bereinigen (`Transaction.merchant` → `counterpartyName` etc.)
 
 ### ⏳ Phase 1 (nach Pilot)
 - Kanzlei-Registrierung, Invite-Flow, Stripe
