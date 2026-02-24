@@ -20,6 +20,8 @@
 | **RLS** | Row Level Security für alle Tabellen deployed (`20260224090000_add_rls_policies.sql`) | Feb 24 |
 | **process-document** | Edge Function deployed; Azure DI Secrets gesetzt | Feb 24 |
 | **run-matching** | Edge Function deployed; Matching Engine als Deno-kompatible `_shared/`-Kopie | Feb 24 |
+| **Storage RLS** | `documents`-Bucket abgesichert: nur eigener Tenant-Ordner (`20260224100000`) | Feb 24 |
+| **Upload-UI** | `MonthSetup.tsx` mit echten File-Inputs, `documentApi.ts`, echte Matching-Ergebnisse | Feb 24 |
 
 ---
 
@@ -47,12 +49,17 @@ Ziel: PDF-Upload → Azure OCR → Matching → Ergebnis im Frontend – alles m
 - Input: `{ tenantId, monthId }` → Output: `MatchingRunResult`
 - `supabase functions deploy run-matching` erfolgreich
 
-### Schritt 5 – Frontend Upload-UI
-- [ ] PDF-Upload-Komponente (Bankauszug + Belege)
-- [ ] Upload → Supabase Storage → Trigger `process-document`
-- [ ] Matching-Button → ruft `run-matching` auf
-- [ ] Ergebnis anzeigen: `ApiTxView[]` als Transaktionsliste
-- Zuständig: **Florian**
+### ✅ Schritt 5 – Frontend Upload-UI
+- Storage-RLS-Migration: `documents`-Bucket nur für eigenen Tenant zugänglich
+- `frontend/src/lib/documentApi.ts`: `uploadDocument`, `processDocument`, `runMatching`, `toApiMonthId`
+- `MonthSetup.tsx`: echte `<input type="file">` (PDF/CSV/Bilder, Mehrfachauswahl für Belege)
+- Matching-Ergebnis zeigt echte Zahlen aus `MatchingRunResult` (finalMatches, txCount, suggestedMatches)
+- tsc fehlerfrei, committed + gepusht auf main
+
+### Phase 0.3 – Offene Folgeschritte
+- [ ] OpenItems / ClusterDetail auf echte DB-Daten umstellen (aktuell noch Mock-Store)
+- [ ] Frontend-Typen bereinigen (`Transaction.merchant` → `counterpartyName`, `paymentMethod` entfernen)
+- [ ] MandantDashboard: echte Monatsübersicht aus DB (statt Mock-Statistiken)
 
 ---
 
