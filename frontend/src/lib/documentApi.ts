@@ -21,6 +21,18 @@ const MONTH_NAMES: Record<string, string> = {
   september: '09', oktober: '10', november: '11', dezember: '12',
 };
 
+const FRONTEND_MONTH_KEYS = [
+  'januar','februar','maerz','april','mai','juni',
+  'juli','august','september','oktober','november','dezember',
+];
+
+/** Konvertiert API-Format zurück ins Frontend-Format. Beispiel: `2023-01` → `januar-2023` */
+export function toFrontendMonthId(apiMonth: string): string {
+  const [year, month] = apiMonth.split('-');
+  const key = FRONTEND_MONTH_KEYS[parseInt(month, 10) - 1];
+  return key ? `${key}-${year}` : apiMonth;
+}
+
 /**
  * Konvertiert das Frontend-Monats-Format in das API-Format.
  * Beispiel: `maerz-2026` → `2026-03`
@@ -296,4 +308,25 @@ export async function resolveTransaction(txId: string, resolution: string | null
     .update({ mandant_resolution: resolution })
     .eq('id', txId);
   if (error) throw new Error(`Auflösung speichern fehlgeschlagen: ${error.message}`);
+}
+
+/**
+ * Gibt alle Monate zurück, für die Transaktionen in der DB vorhanden sind.
+ * Rückgabe: Frontend-Monats-IDs, neueste zuerst, z. B. ['februar-2026', 'januar-2023']
+ */
+export async function loadProcessedMonths(tenantId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('bank_transactions')
+    .select('value_date')
+    .eq('tenant_id', tenantId)
+    .order('value_date', { ascending: false });
+
+  if (!data?.length) return [];
+
+  const monthSet = new Set<string>();
+  for (const row of data) {
+    monthSet.add((row.value_date as string).slice(0, 7)); // "YYYY-MM"
+  }
+
+  return [...monthSet].map(toFrontendMonthId);
 }
