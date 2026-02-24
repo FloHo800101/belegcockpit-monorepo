@@ -38,12 +38,24 @@ beleg-cockpit/
 - `/kanzlei` – Übersicht aller Mandanten
 - `/kanzlei/mandant/:id/cluster/:clusterKey` – Cluster-Arbeitsliste
 
-## Offene Aufgaben (Roadmap)
-1. [ ] API Contract / Shared Data Model (Frontend ↔ Backend verbinden)
-2. [ ] Authentifizierung (Supabase Auth ins Frontend integrieren)
-3. [ ] Rollen & Berechtigungen (Mandant vs. Kanzlei)
-4. [ ] Feature Entitlement (welche Features für welche Rolle/Plan)
-5. [ ] Testautomatisierung (Frontend + Backend)
+## Roadmap
+
+### ✅ Abgeschlossen
+- API Contract: `packages/shared/` (ApiTx, ApiDoc, ApiTxView, alle Workflow-Typen)
+- Authentifizierung: Supabase Auth (Login, Register, Logout, AuthContext, ProtectedRoute)
+- Deploy: GitHub Pages live (https://floho800101.github.io/belegcockpit-monorepo/)
+- DB: 18 Migrationen deployed, RLS-Policies für alle Tabellen aktiv
+
+### 🟡 In Arbeit – Phase 0.2 Backend-Anbindung
+- [ ] `process-document` Edge Function deployen (Azure DI Key benötigt)
+- [ ] `run-matching` Edge Function bauen (PipelineResult → ApiTxView[] Adapter)
+- [ ] Frontend Upload-UI (PDF → Storage → OCR → Matching → Anzeige)
+
+### ⏳ Phase 1 (nach Pilot)
+- Kanzlei-Registrierung, Invite-Flow, Stripe
+- RoleSwitcher durch echte Supabase-Rolle ersetzen
+
+→ Vollständiges Backlog mit Details: BACKLOG.md
 
 ## Git-Workflow (in Diskussion)
 - Strategie: GitHub Flow (Feature-Branches + PR in main)

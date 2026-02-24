@@ -1,6 +1,6 @@
 # BelegCockpit – Backlog & Arbeitsstand
 
-> Zuletzt aktualisiert: 2026-02-23
+> Zuletzt aktualisiert: 2026-02-24
 
 ---
 
@@ -16,29 +16,30 @@
 | **Auth P0** | Supabase Auth ins Frontend: Login, Register, AuthContext, ProtectedRoute, Logout | Feb 23 |
 | **Deploy** | GitHub Pages live: https://floho800101.github.io/belegcockpit-monorepo/ | Feb 23 |
 | **Gap-Analyse** | Datenfluss DB → Engine → shared → Frontend vollständig analysiert | Feb 23 |
+| **Migrationen** | 18 Migrationen bereits im Live-Projekt (waren schon deployed) | Feb 24 |
+| **RLS** | Row Level Security für alle Tabellen deployed (`20260224090000_add_rls_policies.sql`) | Feb 24 |
 
 ---
 
-## Phase 0.2 – Backend-Anbindung (NÄCHSTES)
+## Phase 0.2 – Backend-Anbindung (IN ARBEIT)
 
 Ziel: PDF-Upload → Azure OCR → Matching → Ergebnis im Frontend – alles mit echten Daten.
 
-### Schritt 1 – Migrationen deployen
-- [ ] `supabase db push` → 17 bestehende Migrationen zum Live-Projekt pushen
-- Zuständig: **Florian** (Supabase-Zugang)
+### ✅ Schritt 1 – Migrationen deployen
+- 18 Migrationen waren bereits im Live-Projekt vorhanden
 
-### Schritt 2 – RLS-Policies
-- [ ] Neue Migration: Row Level Security für alle relevanten Tabellen
-  - `bank_transactions`: `tenant_id = auth.uid()`
-  - `documents`: `tenant_id = auth.uid()`
-  - `match_groups`, `match_edges_*`: über tenant_id
-- Zuständig: **Tilov**
+### ✅ Schritt 2 – RLS-Policies
+- Migration `20260224090000_add_rls_policies.sql` deployed
+- Hilfsfunktion `get_my_tenant_ids()` über `memberships`-Tabelle
+- Alle 13 Tabellen mit `tenant_id` abgesichert; system-Tabellen komplett gesperrt
 
-### Schritt 3 – `process-document` Edge Function deployen
+### 🟡 Schritt 3 – `process-document` Edge Function deployen
 - Die Funktion existiert bereits in `backend/supabase/functions/process-document/`
-- [ ] Azure Document Intelligence Key als Supabase Secret setzen
+- [ ] **Azure Document Intelligence Key als Supabase Secret setzen** ← WARTET AUF KEY
+  ```bash
+  supabase secrets set AZURE_DI_ENDPOINT=https://... AZURE_DI_KEY=...
+  ```
 - [ ] `supabase functions deploy process-document`
-- Zuständig: **Florian** (Azure-Keys) + **Tilov** (Deploy)
 
 ### Schritt 4 – `run-matching` Edge Function bauen
 - Die Funktion fehlt noch komplett
