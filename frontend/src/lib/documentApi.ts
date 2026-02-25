@@ -26,6 +26,11 @@ const FRONTEND_MONTH_KEYS = [
   'juli','august','september','oktober','november','dezember',
 ];
 
+type ExistingDocumentRow = {
+  id: string;
+  storage_path: string;
+};
+
 /** Konvertiert API-Format zurück ins Frontend-Format. Beispiel: `2023-01` → `januar-2023` */
 export function toFrontendMonthId(apiMonth: string): string {
   const [year, month] = apiMonth.split('-');
@@ -79,6 +84,9 @@ export async function uploadDocument(
   userId: string,
 ): Promise<string> {
   const docId = crypto.randomUUID();
+  const fileHash = await sha256Hex(file);
+  const existing = await findExistingDocumentByHash(tenantId, fileHash);
+  if (existing) return existing.id;
   const storagePath = `${tenantId}/${docId}/${file.name}`;
 
   // 1. In Supabase Storage hochladen
@@ -99,15 +107,50 @@ export async function uploadDocument(
       original_filename: file.name,
       mime_type: file.type || 'application/pdf',
       file_size: file.size,
+      file_hash: fileHash,
       status: 'uploaded',
     });
   if (insertError) {
     // Storage-Upload rückgängig machen (best-effort)
     await supabase.storage.from('documents').remove([storagePath]).catch(() => null);
+    if (isUniqueViolation(insertError)) {
+      const racedExisting = await findExistingDocumentByHash(tenantId, fileHash);
+      if (racedExisting) return racedExisting.id;
+    }
     throw new Error(`Datenbankfehler: ${insertError.message}`);
   }
 
   return docId;
+}
+
+async function sha256Hex(file: File): Promise<string> {
+  const arrayBuffer = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest('SHA-256', arrayBuffer);
+  return [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function findExistingDocumentByHash(
+  tenantId: string,
+  fileHash: string,
+): Promise<ExistingDocumentRow | null> {
+  const { data, error } = await (supabase.from('documents') as any)
+    .select('id, storage_path')
+    .eq('tenant_id', tenantId)
+    .eq('file_hash', fileHash)
+    .limit(1);
+  if (error) throw new Error(`Dublettenprüfung fehlgeschlagen: ${error.message}`);
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const row = data[0] as { id?: string; storage_path?: string };
+  if (!row.id || !row.storage_path) return null;
+  return { id: row.id, storage_path: row.storage_path };
+}
+
+function isUniqueViolation(error: { code?: string; message?: string }): boolean {
+  if (error.code === '23505') return true;
+  const message = `${error.message ?? ''}`;
+  return /unique/i.test(message) && /file_hash|documents_tenant_file_hash_unique/i.test(message);
 }
 
 /**
