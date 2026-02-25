@@ -68,7 +68,7 @@ export function parseAmount(value: string | null | undefined): number | null {
 export function parseAmountFlexible(value: string | null | undefined): number | null {
   if (!value) return null;
   const text = normalizeOcrText(value).replace(/\s/g, "");
-  const match = text.match(/[-+]?\d[\d.,]*\d(?:[.,]\d{2})/);
+  const match = text.match(/[-+]?\d[\d.,]*(?:[.,]\d{2})/);
   if (!match) return null;
   let numeric = match[0];
   const lastComma = numeric.lastIndexOf(",");

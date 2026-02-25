@@ -54,8 +54,15 @@ Run all commands below from `backend/`.
   Takes invoice-like `document_extractions.parsed_data` and upserts `invoices`.
 
 - `tests-backend/integration/azure-bank-statement-fx.test.ts`
-  Deno unit tests for foreign currency detection in bank statement mapper.
+  Deno unit tests for foreign currency detection and counterparty extraction in bank statement mapper.
+  Includes Qonto DD/MM date format regression test.
   Run with: `deno test tests-backend/integration/azure-bank-statement-fx.test.ts --no-lock`
+
+- `tests-backend/integration/azure-invoice-vendor-name.test.ts`
+  Deno unit tests for vendor name extraction edge cases in invoice mapper.
+  Covers single-char logo rejection (e.g. Notion "N"), short multi-char names (e.g. "DB"),
+  and fallback through candidate list.
+  Run with: `deno test tests-backend/integration/azure-invoice-vendor-name.test.ts --no-lock`
 
 ## Azure Mapper Architecture
 
@@ -76,10 +83,21 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
 - **`bank-statement-transactions.ts`** — Transaction extraction, merge logic, and reference block parsing:
   - `parseReferenceBlock()` — Parses multi-line reference blocks to extract counterparty name,
     BIC/IBAN, structured fields (EREF, MREF, CRED), value date, and clean reference text.
+  - `extractCounterpartyName()` — Strips booking-type keywords (Gutschrift, Lastschrift, etc.)
+    from description text. Handles keywords both at the start and mid-string (e.g. when Azure
+    merges reference noise from a previous transaction into the current description).
   - `classifyBookingType()` — Maps German transaction types (FOLGELASTSCHRIFT, GUTSCHRIFT, etc.)
     to semantic booking types (direct_debit, transfer, fee, card_payment, interest).
+  - `isDateOnlyLine()` — Detects standalone date lines (DD.MM.YYYY, DD/MM, DD.MM) to filter
+    them from description lines. Supports both dot and slash separators (e.g. Qonto format).
   - `lineStartsWithDate()` — Strict date matching (only lines starting with a date), used to
     prevent value dates in parentheses from being misidentified as transaction boundaries.
+  - `findTransactionBlock()` — Locates OCR lines for a given transaction (date + amount).
+    Scans all matching date lines before falling back to `amountMatched: false`, avoiding
+    false locks on value date lines in reference blocks.
+  - `isStatementBoilerplateLine()` — Detects bank statement page headers, footers, balance
+    summaries, legal text, and barcode IDs. Used as a stop-signal when collecting reference
+    blocks to prevent page-break noise from bleeding into transaction data.
   - `mergeBankStatementTransactions()` — Deduplicates and merges items-based and line-based
     transactions using date+amount matching and text similarity scoring.
 - **`bank-statement-fx.ts`** — Foreign currency detection and exchange rate extraction.
@@ -89,6 +107,8 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `extractIbanFromLine()` — Per-line IBAN extraction for counterparty IBANs.
 - **`azure-field-helpers.ts`** — Type definitions and field accessors for Azure response format.
 - **`party-extraction.ts`** — Vendor/buyer name extraction from OCR text.
+  - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
+    values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, and invoice numbers.
 - **`installment-plan.ts`** — Tax installment plan and invoice number extraction.
 
 ## Data flow

@@ -19,7 +19,10 @@ const SUPABASE_SERVICE_ROLE_KEY = requireEnv(
   process.env.SUPABASE_LIVE_SERVICE_ROLE_KEY,
   "SUPABASE_LIVE_SERVICE_ROLE_KEY"
 );
-const TENANT_ID = process.env.TENANT_ID ?? null;
+const TENANT_ID =
+  process.env.TENANT_ID ??
+  process.env.SUPABASE_LIVE_TENANT_ID ??
+  null;
 const FROM = process.env.FROM ?? null;
 const TO = process.env.TO ?? null;
 const LIMIT_DOCS = toOptionalInt(process.env.LIMIT_DOCS);

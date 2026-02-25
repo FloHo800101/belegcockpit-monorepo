@@ -113,6 +113,8 @@ export function cleanPartyName(value: string | null | undefined): string | null 
   if (!candidate) return null;
   if (/^(?:nr|nnr|kundennr|rechnungsnr)\b/i.test(candidate)) return null;
   if (!/[A-Za-zÄÖÜäöü]/.test(candidate)) return null;
+  // Single characters are never valid party names (e.g. logo letters like "N")
+  if (candidate.length < 2) return null;
   return candidate;
 }
 

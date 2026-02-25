@@ -77,6 +77,24 @@ Ziel: PDF-Upload → Azure OCR → Matching → Ergebnis im Frontend – alles m
 - [ ] Dashboard-Stats pro Monat (Transaktionsanzahl, Auto-Match-Quote) aus DB laden
 - [ ] Abschluss-Seite: echte Zusammenfassung des verarbeiteten Monats
 
+#### 🟡 Phase 0.4 – Nächste Schritte
+
+**1. Multi-Upload & Upload-Feedback verbessern (Frontend)**
+- [ ] Mehrere Kontoauszüge gleichzeitig hochladbar machen (MultiUpload)
+- [ ] Erfolgsmeldung nach Kontoauszug-Upload: statt generischem "Kontoauszug importiert" → konkreten Dokumentnamen anzeigen (z.B. "Sparkasse_2026-01.pdf importiert")
+- [ ] Erfolgsmeldung nach Beleg-Upload: Anzahl importierter Belege anzeigen + Mouseover/Tooltip mit Liste der einzelnen Dateinamen
+
+**2. Frontend Activity Log**
+- [ ] Log/Protokoll im Frontend bauen, das dem Benutzer transparent zeigt, was passiert ist (Upload, Verarbeitung, Matching-Ergebnis, Fehler etc.)
+
+**3. Parsing-Qualität verbessern (Backend)**
+- [ ] Verwendungszweck sauber aus Bank-Statements extrahieren (Azure-Mapper / `parse-utils`)
+- [ ] Vendor / CounterPartyName korrekt aus Parsing-Ergebnis ableiten (`party-extraction`)
+
+**4. Löschfunktion (Backend + Frontend)**
+- [ ] Funktion zum Löschen aller Daten eines Monats / Mandanten
+- [ ] Funktion zum Löschen einzelner Belege inkl. Auflösung bestehender Links/Matches (match_edges, match_groups)
+
 ---
 
 ## Datenfluss-Übersicht
@@ -188,3 +206,4 @@ Alle oben genannten Fälle, die trotzdem als Transaktion auftauchen:
 - Commit-Konvention: Conventional Commits (`feat(backend):`, `fix(frontend):`, `chore:`)
 - PRs gegen `main` → CI muss grün sein (tsc + vitest)
 - **Tilov:** arbeitet auf `backend/<feature>`-Branches, PR → Review → merge
+

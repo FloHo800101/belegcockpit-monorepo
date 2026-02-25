@@ -52,7 +52,24 @@ export function classifyBookingType(description: string): ParsedTransaction["boo
 export function extractCounterpartyName(description: string): string | null {
   const trimmed = description.trim();
   if (!trimmed) return null;
+
+  // Try stripping a booking-type keyword at the very beginning
   const cleaned = trimmed.replace(BOOKING_TYPE_PREFIX, "").trim();
+  if (cleaned !== trimmed) return cleaned || null;
+
+  // Keyword not at start – look for a booking-type keyword later in the text.
+  // This handles cases where Azure merges reference noise from a previous
+  // transaction into the current description, e.g.:
+  //   "/ K 396572 /2022-24/ ... Gutschrift EWE VERTRIEB GmbH"
+  const allKeywords = BOOKING_TYPE_MAP.flatMap(([re]) => re.source.split("|"));
+  const midPattern = new RegExp(`(?:^|\\s)(${allKeywords.join("|")})\\s+`, "i");
+  const midMatch = trimmed.match(midPattern);
+  if (midMatch && midMatch.index != null) {
+    const keywordStart = midMatch.index + midMatch[0].indexOf(midMatch[1]);
+    const afterKeyword = trimmed.slice(keywordStart).replace(BOOKING_TYPE_PREFIX, "").trim();
+    if (afterKeyword) return afterKeyword;
+  }
+
   return cleaned || null;
 }
 
@@ -82,10 +99,55 @@ function isNoiseLine(line: string): boolean {
   if (/^(Endsaldo|Anfangssaldo|Alter Saldo|Neuer Saldo|Kontostand)\b/i.test(n)) return true;
   // Page numbers (standalone digit)
   if (/^\d{1,2}$/.test(n)) return true;
+  // Standalone short dates like "05/05" or "01.05"
+  if (/^\d{1,2}[./]\d{1,2}$/.test(n)) return true;
   // Standalone amounts
   if (/^[+-]?\s?\d[\d., ]*\d(?:[.,]\d{2})?$/.test(n)) return true;
   // Value date in parens only
   if (/^\(\d{1,2}[./]\d{1,2}[./]?\d{0,4}\)$/.test(n)) return true;
+  return false;
+}
+
+// Detects bank statement boilerplate that should never appear in reference blocks:
+// page headers/footers, legal text, balance summaries, barcode IDs.
+// Returns true for lines that signal the end of meaningful transaction data.
+export function isStatementBoilerplateLine(line: string): boolean {
+  const n = normalizeOcrText(line);
+  if (!n) return true;
+
+  // Page table headers (re-appearing on page 2+)
+  if (/^Buchung\s*\/?\s*Verwendungszweck/i.test(n)) return true;
+  if (/^Betrag\s*\(/i.test(n)) return true;
+  if (/^Valuta$/i.test(n)) return true;
+  if (/^Seite\b/i.test(n)) return true;
+
+  // Statement metadata headers
+  if (/^(Girokonto\s+Nummer|Kontoauszug\s+\w+\s+\d{4})/i.test(n)) return true;
+  if (/^\d+\s+von\s+\d+$/.test(n)) return true; // "2 von 2"
+
+  // Balance summary / customer info
+  if (/^(Neuer Saldo|Alter Saldo|Endsaldo|Anfangssaldo|Kontostand)\b/i.test(n)) return true;
+  if (/^Kunden-Information/i.test(n)) return true;
+  if (/^(Vorliegender\s+Freistellungsauftrag|Verbrauchter\s+Sparer)/i.test(n)) return true;
+
+  // Bank footer / legal text markers
+  if (/\bSitz:.*\bAG\s/i.test(n) && /\bHRB\s+\d/i.test(n)) return true;
+  if (/\bUSt-?IdNr/i.test(n) && /\bSteuernummer/i.test(n)) return true;
+  if (/^Bitte beachten Sie/i.test(n)) return true;
+  if (/\bAllgemeinen?\s+Gesch[aä]ftsbedingungen/i.test(n)) return true;
+  if (/\bEinlagensicherung/i.test(n)) return true;
+  if (/\bSollzins(s[aä]tze?)?\s+(und|f[uü]r)/i.test(n)) return true;
+
+  // Barcode-style IDs (e.g. "34GKKA5430878061_T")
+  if (/^\d{2}[A-Z]{3,}[A-Z0-9]+_[A-Z]$/i.test(n)) return true;
+
+  // Bank name + address footer lines
+  if (/^[A-Z][\w-]+\s+AG\s*[·.]/i.test(n)) return true; // "ING-DiBa AG · ..."
+  if (/Theodor-Heuss-Allee|Frankfurt am Main/i.test(n) && /Vorstand/i.test(n)) return true;
+
+  // Standalone "Herrn" or address block of account holder (header area)
+  if (/^Herrn$/i.test(n)) return true;
+
   return false;
 }
 
@@ -182,7 +244,7 @@ export function isSectionHeader(line: string): boolean {
 }
 
 export function isDateOnlyLine(line: string): boolean {
-  return /^\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(line.trim());
+  return /^\d{1,2}[./]\d{1,2}([./]\d{2,4})?$/.test(line.trim());
 }
 
 export function lineStartsWithDate(
@@ -246,6 +308,8 @@ export function findTransactionBlock(
   amount: number,
   referenceYear: number
 ): { dateIndex: number; amountIndex: number; amountMatched: boolean } | null {
+  let firstDateFallback: { dateIndex: number; amountIndex: number; amountMatched: false } | null = null;
+
   for (let i = startIndex; i < lines.length; i += 1) {
     if (!lineStartsWithDate(lines[i], dateIso, referenceYear)) continue;
 
@@ -258,10 +322,15 @@ export function findTransactionBlock(
       }
     }
 
-    return { dateIndex: i, amountIndex: i, amountMatched: false };
+    // Remember the first date match as fallback, but keep searching for
+    // a date line with an actual amount match (avoids locking onto value
+    // dates like "05.05.2025" in reference blocks)
+    if (!firstDateFallback) {
+      firstDateFallback = { dateIndex: i, amountIndex: i, amountMatched: false };
+    }
   }
 
-  return null;
+  return firstDateFallback;
 }
 
 export function buildTransactionContextWindow(
@@ -336,9 +405,14 @@ export function extractTransactionsFromItems(
 
       const nextBlock = blocks.slice(index + 1).find((candidate) => candidate?.block);
       const nextStart = nextBlock?.block?.dateIndex ?? lines.length;
-      const referenceLines = lines
-        .slice((amountMatched ? amountIndex : dateIndex) + 1, nextStart)
-        .filter((line) => line && !isDateOnlyLine(line) && !isSectionHeader(line));
+      const rawRefSlice = lines.slice((amountMatched ? amountIndex : dateIndex) + 1, nextStart);
+      const referenceLines: string[] = [];
+      for (const refLine of rawRefSlice) {
+        if (!refLine || isDateOnlyLine(refLine) || isSectionHeader(refLine)) continue;
+        // Stop collecting once we hit page footer/header boilerplate
+        if (isStatementBoilerplateLine(refLine)) break;
+        referenceLines.push(refLine);
+      }
       if (referenceLines.length) {
         reference = referenceLines.join("\n");
       }
@@ -464,6 +538,8 @@ export function extractTransactionsFromStatementLines(
       const nextLine = lines[j];
       if (dateStartPattern.test(nextLine)) break;
       if (isSectionHeader(nextLine)) continue;
+      // Stop collecting once we hit page footer/header boilerplate
+      if (isStatementBoilerplateLine(nextLine)) break;
       postAmountLines.push(nextLine);
     }
 

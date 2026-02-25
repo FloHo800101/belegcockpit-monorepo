@@ -16,6 +16,7 @@
     "test:backfill-bank-transactions": "tsx tests-backend/integration/backfill-bank-transactions.ts",
     "test:backfill-invoices": "tsx tests-backend/integration/backfill-invoices.ts",
     "test:backfill-document-hashes": "tsx tests-backend/integration/backfill-document-hashes.ts",
+    "cleanup:duplicate-documents": "tsx tests-backend/integration/cleanup-duplicate-documents.ts",
     "cleanup:bank-transactions": "tsx tests-backend/matching/cleanup-bank-transactions.ts",
     "cleanup:invoices": "tsx tests-backend/matching/cleanup-invoices.ts",
     "cleanup:matching-all": "tsx tests-backend/matching/cleanup-matching-all.ts",
