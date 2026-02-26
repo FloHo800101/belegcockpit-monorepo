@@ -26,7 +26,7 @@ const BOOKING_TYPE_MAP: Array<[RegExp, ParsedTransaction["bookingType"]]> = [
   [/FOLGELASTSCHRIFT|ERSTLASTSCHRIFT|LASTSCHRIFT/i, "direct_debit"],
   [/ONLINE-UEBERWEISUNG|UEBERWEISUNG|DAUERAUFTRAG/i, "transfer"],
   [/GUTSCHRIFT|EINZAHLUNG/i, "transfer"],
-  [/ENTGELTABSCHLUSS|ABSCHLUSS/i, "fee"],
+  [/ENTGELTABSCHLUSS|ENTGELT|ABSCHLUSS/i, "fee"],
   [/ZINSEN|ZINSABSCHLUSS/i, "interest"],
   [/KARTENZAHLUNG|GIROCARD|GIROSAMMEL/i, "card_payment"],
 ];
@@ -486,8 +486,11 @@ export function extractTransactionsFromStatementLines(
     .filter(Boolean);
 
   const dateStartPattern = /^(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\b/;
+  // No spaces in the amount character class — prevents reference lines like
+  // "15.02.2023 STEUERNR ... VZ202 3 1.955,66EUR" from matching "202 3 1.955,66"
+  // as a single amount (which produces phantom transactions with garbage values).
   const amountTailPattern =
-    /([+-]?\s?\d[\d., ]*\d(?:[.,]\d{2}))(?:\s*([A-Z]{3}))?\s*$/;
+    /([+-]?\d[\d.,]*\d(?:[.,]\d{2}))(?:\s*([A-Z]{3}))?\s*$/;
   const out: ParsedTransaction[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -758,8 +761,29 @@ export function mergeBankStatementTransactions(
     });
   }
 
+  // Collect items-based date+absAmount pairs for duplicate/phantom detection.
+  // Uses absolute amounts so that opposite-sign duplicates from separate
+  // "Eingänge"/"Ausgänge" sections (e.g. Qonto) are also caught.
+  const itemsDateAbsAmounts = new Set(
+    items.map((item) => {
+      const d = normalizeDateOnly(item.tx.bookingDate) ?? "";
+      const a = Math.abs(amountValue(item.tx.amount) ?? 0);
+      return `${d}|${a}`;
+    })
+  );
+
   for (const line of lines) {
     if (usedLineIndexes.has(line.index)) continue;
+
+    // Filter duplicate/phantom lines: unmatched lines whose date + absolute
+    // amount matches an items-sourced transaction. This covers:
+    // - Phantom lines (no counterparty, ING value-date echo lines)
+    // - Same-sign duplicates (text similarity too low for merge)
+    // - Opposite-sign duplicates (Qonto Eingänge/Ausgänge sections)
+    const ld = normalizeDateOnly(line.tx.bookingDate) ?? "";
+    const la = Math.abs(amountValue(line.tx.amount) ?? 0);
+    if (itemsDateAbsAmounts.has(`${ld}|${la}`)) continue;
+
     merged.push({
       tx: line.tx,
       sourceRank: 1,

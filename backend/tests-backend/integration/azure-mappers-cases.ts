@@ -23,6 +23,11 @@ import {
 const RUNS_TABLE = "document_analyze_runs";
 const FORCE_REPARSE = Deno.env.get("FORCE_REPARSE") === "1";
 const SHOULD_ASSERT = !FORCE_REPARSE;
+let TENANT_ID: string | null = null;
+let FROM: string | null = null;
+let TO: string | null = null;
+let LIMIT_DOCS: number | null = null;
+const DOCUMENTS_TABLE = "documents";
 
 function assertIf(condition: unknown, message: string) {
   if (!SHOULD_ASSERT) return;
@@ -49,8 +54,86 @@ function parsePercent(value: string | null | undefined): number | null {
   return percent / 100;
 }
 
+type AnalyzeRun = {
+  id: string;
+  document_id?: string | null;
+  storage_path?: string | null;
+  model_id: string;
+  analyze_result: unknown;
+  parsed_data?: unknown;
+};
+
+type DocumentRow = {
+  id: string;
+  storage_path: string;
+  tenant_id: string | null;
+  created_at: string | null;
+};
+
+function chunk<T>(items: T[], size: number) {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+async function loadDocumentsById(
+  supabase: ReturnType<typeof createSupabaseTestClient>,
+  documentIds: string[]
+) {
+  const map = new Map<string, DocumentRow>();
+  for (const group of chunk(documentIds, 200)) {
+    const { data, error } = await (supabase.from(DOCUMENTS_TABLE) as any)
+      .select("id, storage_path, tenant_id, created_at")
+      .in("id", group);
+    if (error) throw new Error(`Failed to load documents by id: ${error.message}`);
+    for (const row of (data ?? []) as DocumentRow[]) map.set(row.id, row);
+  }
+  return map;
+}
+
+async function loadDocumentsByPath(
+  supabase: ReturnType<typeof createSupabaseTestClient>,
+  storagePaths: string[]
+) {
+  const map = new Map<string, DocumentRow>();
+  for (const group of chunk(storagePaths, 200)) {
+    const { data, error } = await (supabase.from(DOCUMENTS_TABLE) as any)
+      .select("id, storage_path, tenant_id, created_at")
+      .in("storage_path", group);
+    if (error) throw new Error(`Failed to load documents by path: ${error.message}`);
+    for (const row of (data ?? []) as DocumentRow[]) map.set(row.storage_path, row);
+  }
+  return map;
+}
+
+function toDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error(`Invalid date: ${value}`);
+  return date.toISOString();
+}
+
+function toOptionalInt(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function matchesFilters(row: DocumentRow | null): boolean {
+  if (!TENANT_ID && !FROM && !TO) return true;
+  if (!row) return false;
+  if (TENANT_ID && row.tenant_id !== TENANT_ID) return false;
+  if ((FROM || TO) && !row.created_at) return false;
+  if (FROM && row.created_at && row.created_at < toDateTime(FROM)) return false;
+  if (TO && row.created_at && row.created_at > toDateTime(TO)) return false;
+  return true;
+}
+
 async function run() {
   await loadEnvFiles();
+  TENANT_ID = Deno.env.get("TENANT_ID") ?? Deno.env.get("SUPABASE_LIVE_TENANT_ID") ?? null;
+  FROM = Deno.env.get("FROM") ?? null;
+  TO = Deno.env.get("TO") ?? null;
+  LIMIT_DOCS = toOptionalInt(Deno.env.get("LIMIT_DOCS"));
   const supabase = createSupabaseTestClient();
   type AzureAnalyzeResult = {
     content?: string;
@@ -60,7 +143,7 @@ async function run() {
   };
 
   let query = (supabase.from(RUNS_TABLE) as any).select(
-    "id, model_id, analyze_result, parsed_data, storage_path"
+    "id, document_id, model_id, analyze_result, parsed_data, storage_path"
   );
   if (!FORCE_REPARSE) {
     query = query.is("parsed_data", null);
@@ -69,7 +152,8 @@ async function run() {
   if (error) {
     throw new Error(`Failed to load analyze runs: ${error.message}`);
   }
-  if (!runs?.length) {
+  const runList = (runs ?? []) as AnalyzeRun[];
+  if (!runList.length) {
     console.log(
       "[azure-mappers] nothing to do (all parsed_data present).",
       FORCE_REPARSE ? "FORCE_REPARSE=1 was set." : ""
@@ -77,7 +161,24 @@ async function run() {
     return;
   }
 
-  for (const run of runs) {
+  const documentIds = Array.from(
+    new Set(runList.map((run) => run.document_id ?? null).filter(Boolean) as string[])
+  );
+  const storagePaths = Array.from(
+    new Set(runList.map((run) => run.storage_path ?? null).filter(Boolean) as string[])
+  );
+  const documentMapById = await loadDocumentsById(supabase, documentIds);
+  const documentMapByPath = await loadDocumentsByPath(supabase, storagePaths);
+
+  let processed = 0;
+
+  for (const run of runList) {
+    const rowById = run.document_id ? documentMapById.get(run.document_id) ?? null : null;
+    const rowByPath = run.storage_path ? documentMapByPath.get(run.storage_path) ?? null : null;
+    const docRow = rowById ?? rowByPath;
+    if (!matchesFilters(docRow)) continue;
+    if (LIMIT_DOCS && processed >= LIMIT_DOCS) break;
+
     const modelId = run.model_id as string;
     const analyze = run.analyze_result as AzureAnalyzeResult | null;
     if (!analyze) {
@@ -148,6 +249,7 @@ async function run() {
         if (updateError) {
           throw new Error(`Failed to update bank-statement run ${run.id}: ${updateError.message}`);
         }
+        processed += 1;
         continue;
       }
 
@@ -289,6 +391,7 @@ async function run() {
       if (updateError) {
         throw new Error(`Failed to update invoice run ${run.id}: ${updateError.message}`);
       }
+      processed += 1;
     } else if (modelId === "prebuilt-receipt") {
       const receiptRes = mapAzureReceiptToParseResult(analyze);
       assertIf(receiptRes.parsed, "Receipt parsed result missing");
@@ -343,6 +446,7 @@ async function run() {
       if (updateError) {
         throw new Error(`Failed to update receipt run ${run.id}: ${updateError.message}`);
       }
+      processed += 1;
     } else if (modelId === "prebuilt-layout") {
       const layoutRes = mapAzureLayoutToParseResult(analyze);
       assertIf(layoutRes.parsed, "Layout parsed result missing");
@@ -370,12 +474,13 @@ async function run() {
       if (updateError) {
         throw new Error(`Failed to update layout run ${run.id}: ${updateError.message}`);
       }
+      processed += 1;
     } else {
       console.log("[azure-mappers] skipped unknown model", run.id, modelId);
     }
   }
 
-  console.log("[azure-mappers] ok", { updated: runs.length });
+  console.log("[azure-mappers] ok", { updated: processed, total: runList.length });
 }
 
 if (import.meta.main) {

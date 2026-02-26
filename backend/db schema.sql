@@ -1,0 +1,278 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.bank_transactions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  amount numeric NOT NULL,
+  currency text NOT NULL,
+  value_date date NOT NULL,
+  booking_date date,
+  iban text,
+  counterparty_name text,
+  end_to_end_id text,
+  reference text,
+  link_state USER-DEFINED NOT NULL DEFAULT 'unlinked'::link_state,
+  open_amount numeric,
+  match_group_id uuid,
+  matched_at timestamp with time zone,
+  matched_by text,
+  match_reason text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  run_id uuid,
+  source_document_id uuid,
+  source_index integer,
+  foreign_amount numeric,
+  foreign_currency text,
+  exchange_rate numeric,
+  mandant_resolution text CHECK (mandant_resolution = ANY (ARRAY['no_receipt'::text, 'self_receipt'::text, 'private'::text, 'refund_confirmed'::text])),
+  CONSTRAINT bank_transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT bank_transactions_match_group_fk FOREIGN KEY (tenant_id) REFERENCES public.match_groups(id),
+  CONSTRAINT bank_transactions_match_group_fk FOREIGN KEY (tenant_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT bank_transactions_match_group_fk FOREIGN KEY (match_group_id) REFERENCES public.match_groups(id),
+  CONSTRAINT bank_transactions_match_group_fk FOREIGN KEY (match_group_id) REFERENCES public.match_groups(tenant_id)
+);
+CREATE TABLE public.document_analyze_runs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  storage_path text NOT NULL,
+  model_id text NOT NULL,
+  analyze_result jsonb NOT NULL,
+  parsed_data jsonb,
+  parse_confidence numeric,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT document_analyze_runs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.document_extractions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  document_id uuid NOT NULL UNIQUE,
+  status text NOT NULL DEFAULT 'queued'::text,
+  parsing_path text,
+  model_used text,
+  decision_reason text,
+  parse_confidence numeric,
+  parsed_data jsonb,
+  raw_result jsonb,
+  raw_xml text,
+  error text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  detected_document_type text,
+  detection_confidence numeric,
+  detection_reasons jsonb,
+  CONSTRAINT document_extractions_pkey PRIMARY KEY (id),
+  CONSTRAINT document_extractions_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
+);
+CREATE TABLE public.document_xml_parse_runs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  storage_path text NOT NULL,
+  source_type text NOT NULL,
+  parsed_data jsonb NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT document_xml_parse_runs_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.documents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  uploaded_by uuid,
+  storage_bucket text NOT NULL DEFAULT 'documents'::text,
+  storage_path text NOT NULL,
+  original_filename text NOT NULL,
+  mime_type text,
+  file_size bigint,
+  status text NOT NULL DEFAULT 'uploaded'::text,
+  document_type text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  link_state USER-DEFINED NOT NULL DEFAULT 'unlinked'::link_state,
+  match_group_id uuid,
+  open_amount numeric,
+  matched_at timestamp with time zone,
+  matched_by text,
+  match_reason text,
+  run_id uuid,
+  file_hash text,
+  CONSTRAINT documents_pkey PRIMARY KEY (id),
+  CONSTRAINT documents_match_group_fk FOREIGN KEY (tenant_id) REFERENCES public.match_groups(id),
+  CONSTRAINT documents_match_group_fk FOREIGN KEY (tenant_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT documents_match_group_fk FOREIGN KEY (match_group_id) REFERENCES public.match_groups(id),
+  CONSTRAINT documents_match_group_fk FOREIGN KEY (match_group_id) REFERENCES public.match_groups(tenant_id)
+);
+CREATE TABLE public.invoice_line_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  invoice_id uuid NOT NULL,
+  document_id uuid NOT NULL,
+  line_index integer NOT NULL,
+  description text,
+  amount_signed numeric NOT NULL,
+  amount_abs numeric NOT NULL,
+  currency text NOT NULL,
+  link_state USER-DEFINED NOT NULL DEFAULT 'unlinked'::link_state,
+  open_amount numeric NOT NULL,
+  match_group_id uuid,
+  matched_at timestamp with time zone,
+  meta jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT invoice_line_items_pkey PRIMARY KEY (id),
+  CONSTRAINT invoice_line_items_invoice_id_fkey FOREIGN KEY (invoice_id) REFERENCES public.invoices(id),
+  CONSTRAINT invoice_line_items_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
+  CONSTRAINT invoice_line_items_match_group_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.match_groups(id),
+  CONSTRAINT invoice_line_items_match_group_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT invoice_line_items_match_group_id_tenant_id_fkey FOREIGN KEY (match_group_id) REFERENCES public.match_groups(id),
+  CONSTRAINT invoice_line_items_match_group_id_tenant_id_fkey FOREIGN KEY (match_group_id) REFERENCES public.match_groups(tenant_id)
+);
+CREATE TABLE public.invoices (
+  id uuid NOT NULL,
+  tenant_id uuid NOT NULL,
+  document_id uuid NOT NULL,
+  amount numeric,
+  currency text,
+  invoice_date date,
+  due_date date,
+  invoice_no text,
+  iban text,
+  e2e_id text,
+  vendor_name text,
+  link_state USER-DEFINED NOT NULL DEFAULT 'unlinked'::link_state,
+  open_amount numeric,
+  match_group_id uuid,
+  matched_at timestamp with time zone,
+  matched_by text,
+  match_reason text,
+  run_id uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  amount_candidates jsonb,
+  buyer_name text,
+  CONSTRAINT invoices_pkey PRIMARY KEY (id),
+  CONSTRAINT invoices_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id)
+);
+CREATE TABLE public.match_edges_docs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  match_group_id uuid NOT NULL,
+  document_id uuid NOT NULL,
+  amount numeric,
+  direction USER-DEFINED,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  run_id uuid,
+  CONSTRAINT match_edges_docs_pkey PRIMARY KEY (id),
+  CONSTRAINT match_edges_docs_match_group_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.match_groups(id),
+  CONSTRAINT match_edges_docs_match_group_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT match_edges_docs_match_group_id_tenant_id_fkey FOREIGN KEY (match_group_id) REFERENCES public.match_groups(id),
+  CONSTRAINT match_edges_docs_match_group_id_tenant_id_fkey FOREIGN KEY (match_group_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT match_edges_docs_document_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.documents(id),
+  CONSTRAINT match_edges_docs_document_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.documents(tenant_id),
+  CONSTRAINT match_edges_docs_document_id_tenant_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(id),
+  CONSTRAINT match_edges_docs_document_id_tenant_id_fkey FOREIGN KEY (document_id) REFERENCES public.documents(tenant_id)
+);
+CREATE TABLE public.match_edges_txs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  match_group_id uuid NOT NULL,
+  bank_transaction_id uuid NOT NULL,
+  amount numeric,
+  direction USER-DEFINED,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  run_id uuid,
+  CONSTRAINT match_edges_txs_pkey PRIMARY KEY (id),
+  CONSTRAINT match_edges_txs_match_group_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.match_groups(id),
+  CONSTRAINT match_edges_txs_match_group_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT match_edges_txs_match_group_id_tenant_id_fkey FOREIGN KEY (match_group_id) REFERENCES public.match_groups(id),
+  CONSTRAINT match_edges_txs_match_group_id_tenant_id_fkey FOREIGN KEY (match_group_id) REFERENCES public.match_groups(tenant_id),
+  CONSTRAINT match_edges_txs_bank_transaction_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.bank_transactions(id),
+  CONSTRAINT match_edges_txs_bank_transaction_id_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.bank_transactions(tenant_id),
+  CONSTRAINT match_edges_txs_bank_transaction_id_tenant_id_fkey FOREIGN KEY (bank_transaction_id) REFERENCES public.bank_transactions(id),
+  CONSTRAINT match_edges_txs_bank_transaction_id_tenant_id_fkey FOREIGN KEY (bank_transaction_id) REFERENCES public.bank_transactions(tenant_id)
+);
+CREATE TABLE public.match_groups (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  relation_type USER-DEFINED NOT NULL,
+  state USER-DEFINED NOT NULL DEFAULT 'final'::match_state,
+  confidence numeric,
+  match_reason text,
+  matched_by text,
+  matched_at timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  run_id uuid,
+  CONSTRAINT match_groups_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.matching_applied_matches (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  run_id uuid NOT NULL,
+  op_kind text NOT NULL,
+  entity_type text NOT NULL,
+  entity_id uuid,
+  match_group_id uuid,
+  before_state jsonb,
+  after_state jsonb,
+  payload jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT matching_applied_matches_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.matching_audit (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  run_id uuid NOT NULL,
+  event_time timestamp with time zone NOT NULL,
+  decision_key text NOT NULL,
+  state USER-DEFINED NOT NULL,
+  relation_type USER-DEFINED NOT NULL,
+  tx_ids ARRAY NOT NULL DEFAULT '{}'::uuid[],
+  doc_ids ARRAY NOT NULL DEFAULT '{}'::uuid[],
+  match_group_id uuid,
+  confidence numeric,
+  reason_codes ARRAY NOT NULL DEFAULT '{}'::text[],
+  inputs jsonb,
+  matched_by text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT matching_audit_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.matching_runs (
+  run_id uuid NOT NULL,
+  tenant_id uuid NOT NULL,
+  params jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT matching_runs_pkey PRIMARY KEY (run_id)
+);
+CREATE TABLE public.matching_suggestions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  run_id uuid NOT NULL,
+  decision jsonb NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT matching_suggestions_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.memberships (
+  tenant_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  role text NOT NULL DEFAULT 'member'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT memberships_pkey PRIMARY KEY (tenant_id, user_id),
+  CONSTRAINT memberships_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.tenants(id),
+  CONSTRAINT memberships_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.receipts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  tenant_id uuid NOT NULL,
+  uploaded_by uuid,
+  storage_bucket text NOT NULL DEFAULT 'receipts'::text,
+  storage_path text NOT NULL,
+  original_filename text NOT NULL,
+  mime_type text,
+  file_size bigint,
+  status text NOT NULL DEFAULT 'uploaded'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT receipts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.tenants (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT tenants_pkey PRIMARY KEY (id)
+);
