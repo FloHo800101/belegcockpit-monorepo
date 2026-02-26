@@ -363,8 +363,10 @@ async function run() {
         const { data: saved, error: saveError } = await (supabase
           .from(RUNS_TABLE) as any)
           .insert({
+            document_id: documentId,
             storage_path: storagePath,
             model_id: modelId,
+            source: "fixture",
             analyze_result: result,
             parsed_data: mapped.parsed,
             parse_confidence: mapped.confidence,

@@ -6,6 +6,10 @@ import { processDocument } from "../_shared/processor.ts";
 import { buildInvoiceAmountCandidates } from "../_shared/invoice-amount-candidates.ts";
 import { buildInvoiceLineItemRows } from "../_shared/invoice-line-items.ts";
 
+const RUNS_TABLE = "document_analyze_runs";
+const LIVE_RUN_SOURCE = "live_process";
+const AZURE_MODELS = new Set(["prebuilt-invoice", "prebuilt-receipt", "prebuilt-layout"]);
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, x-process-token, content-type",
@@ -78,6 +82,12 @@ serve(async (req) => {
     );
 
     const result = await processDocument(supabase, document);
+    await persistLiveAnalyzeRun({
+      supabase,
+      documentId,
+      storagePath: (document.storage_path ?? "").toString(),
+      result,
+    });
 
     const extractionStatus =
       result.status === "parsed"
@@ -158,6 +168,60 @@ function deriveDocumentType(
   }
   if (parsed.documentType === "bank_statement") return "BANK_STATEMENT";
   return null;
+}
+
+async function persistLiveAnalyzeRun(params: {
+  supabase: any;
+  documentId: string;
+  storagePath: string;
+  result: {
+    model_used?: string | null;
+    raw_result?: unknown;
+    parsed_data?: unknown;
+    confidence?: number | null;
+  };
+}) {
+  const { supabase, documentId, storagePath, result } = params;
+  const modelId = result.model_used ?? null;
+  if (!modelId || !AZURE_MODELS.has(modelId)) return;
+  if (result.raw_result == null) return;
+
+  const payload = {
+    document_id: documentId,
+    storage_path: storagePath,
+    model_id: modelId,
+    source: LIVE_RUN_SOURCE,
+    analyze_result: result.raw_result,
+    parsed_data: result.parsed_data ?? null,
+    parse_confidence: result.confidence ?? null,
+  };
+
+  const { data: existing, error: existingError } = await supabase
+    .from(RUNS_TABLE)
+    .select("id")
+    .eq("document_id", documentId)
+    .eq("model_id", modelId)
+    .eq("source", LIVE_RUN_SOURCE)
+    .limit(1);
+  if (existingError) {
+    throw new Error(`Failed to load analyze run: ${existingError.message}`);
+  }
+
+  if (Array.isArray(existing) && existing.length > 0) {
+    const { error: updateError } = await supabase
+      .from(RUNS_TABLE)
+      .update(payload)
+      .eq("id", existing[0].id);
+    if (updateError) {
+      throw new Error(`Failed to update analyze run: ${updateError.message}`);
+    }
+    return;
+  }
+
+  const { error: insertError } = await supabase.from(RUNS_TABLE).insert(payload);
+  if (insertError) {
+    throw new Error(`Failed to insert analyze run: ${insertError.message}`);
+  }
 }
 
 async function upsertInvoice(params: {
