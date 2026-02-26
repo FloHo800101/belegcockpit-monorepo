@@ -106,8 +106,10 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `lineStartsWithDate()` — Strict date matching (only lines starting with a date), used to
     prevent value dates in parentheses from being misidentified as transaction boundaries.
   - `findTransactionBlock()` — Locates OCR lines for a given transaction (date + amount).
-    Scans all matching date lines before falling back to `amountMatched: false`, avoiding
-    false locks on value date lines in reference blocks.
+    When multiple date lines match within the lookahead window, picks the **closest** date
+    to the amount line. This prevents valuta dates of previous transactions from being
+    mistaken as the block start (e.g. ING statements where all transactions share the
+    same booking date). Falls back to `amountMatched: false` if no amount match is found.
   - `isStatementBoilerplateLine()` — Detects bank statement page headers, footers, balance
     summaries, legal text, and barcode IDs. Used as a stop-signal when collecting reference
     blocks to prevent page-break noise from bleeding into transaction data.
@@ -126,6 +128,12 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
     values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, and invoice numbers.
 - **`installment-plan.ts`** — Tax installment plan and invoice number extraction.
+- **`upsert-helpers.ts`** — Shared utility functions used by both the Edge Function
+  (`process-document`) and Node.js backfill scripts:
+  - `normalizeString()` — Trims whitespace, returns null for empty/non-string values.
+  - `coerceDate()` — Parses ISO, DD.MM.YYYY, and YYYYMMDD date formats to `YYYY-MM-DD`.
+  - `toNumber()` — Converts number/string values (handles German comma decimals).
+  - `buildTransactionReference()` — Prefers dedicated reference field over description.
 
 ## Data flow
 

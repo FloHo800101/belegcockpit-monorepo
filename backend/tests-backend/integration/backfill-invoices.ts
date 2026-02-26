@@ -11,6 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
 import { buildInvoiceAmountCandidates } from "../../supabase/functions/_shared/invoice-amount-candidates";
 import { buildInvoiceLineItemRows } from "../../supabase/functions/_shared/invoice-line-items";
+import { normalizeString, coerceDate } from "../../supabase/functions/_shared/upsert-helpers.ts";
 
 dotenv.config({ path: ".env.live.local" });
 dotenv.config();
@@ -250,19 +251,6 @@ function toDateTime(value: string): string {
     throw new Error(`Invalid date: ${value}`);
   }
   return date.toISOString();
-}
-
-function coerceDate(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
-}
-
-function normalizeString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
 }
 
 function toOptionalInt(value?: string): number | null {

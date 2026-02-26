@@ -5,6 +5,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { processDocument } from "../_shared/processor.ts";
 import { buildInvoiceAmountCandidates } from "../_shared/invoice-amount-candidates.ts";
 import { buildInvoiceLineItemRows } from "../_shared/invoice-line-items.ts";
+import { normalizeString, coerceDate, toNumber, buildTransactionReference } from "../_shared/upsert-helpers.ts";
 
 const RUNS_TABLE = "document_analyze_runs";
 const LIVE_RUN_SOURCE = "live_process";
@@ -413,38 +414,5 @@ async function upsertBankTransactions(params: {
   }
 }
 
-function coerceDate(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
-}
-
-function normalizeString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
-function buildTransactionReference(tx: {
-  description?: string | null;
-  reference?: string | null;
-}): string | null {
-  const parts = [tx.description, tx.reference]
-    .map(normalizeString)
-    .filter((value): value is string => Boolean(value));
-  if (!parts.length) return null;
-  return parts.join("\n");
-}
-
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const normalized = value.replace(/\s/g, "").replace(",", ".");
-    const num = Number(normalized);
-    return Number.isNaN(num) ? Number.NaN : num;
-  }
-  return Number.NaN;
-}
 
 

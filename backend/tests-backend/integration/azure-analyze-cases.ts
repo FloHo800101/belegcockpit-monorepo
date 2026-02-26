@@ -226,9 +226,9 @@ async function findDocumentByHash(
   supabase: ReturnType<typeof createSupabaseTestClient>,
   tenantId: string,
   fileHash: string
-): Promise<{ id: string; storage_path: string } | null> {
+): Promise<{ id: string; tenant_id: string; storage_path: string } | null> {
   const { data, error } = await (supabase.from("documents") as any)
-    .select("id, storage_path")
+    .select("id, tenant_id, storage_path")
     .eq("tenant_id", tenantId)
     .eq("file_hash", fileHash)
     .limit(1);
@@ -236,13 +236,376 @@ async function findDocumentByHash(
     throw new Error(`Failed to check existing documents by hash: ${error.message}`);
   }
   if (!Array.isArray(data) || data.length === 0) return null;
-  const row = data[0] as { id?: string; storage_path?: string };
-  if (!row.id || !row.storage_path) return null;
-  return { id: row.id, storage_path: row.storage_path };
+  const row = data[0] as { id?: string; tenant_id?: string; storage_path?: string };
+  if (!row.id || !row.tenant_id || !row.storage_path) return null;
+  return { id: row.id, tenant_id: row.tenant_id, storage_path: row.storage_path };
+}
+
+async function findDocumentByHashAnyTenant(
+  supabase: ReturnType<typeof createSupabaseTestClient>,
+  fileHash: string
+): Promise<{ id: string; tenant_id: string; storage_path: string } | null> {
+  const { data, error } = await (supabase.from("documents") as any)
+    .select("id, tenant_id, storage_path")
+    .eq("file_hash", fileHash)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    throw new Error(`Failed to check existing documents by hash across tenants: ${error.message}`);
+  }
+  if (!Array.isArray(data) || data.length === 0) return null;
+  const row = data[0] as { id?: string; tenant_id?: string; storage_path?: string };
+  if (!row.id || !row.tenant_id || !row.storage_path) return null;
+  return { id: row.id, tenant_id: row.tenant_id, storage_path: row.storage_path };
+}
+
+async function copyAnalyzeDataToDocument(params: {
+  supabase: ReturnType<typeof createSupabaseTestClient>;
+  sourceDocumentId: string;
+  targetDocumentId: string;
+  targetStoragePath: string;
+}): Promise<boolean> {
+  const { supabase, sourceDocumentId, targetDocumentId, targetStoragePath } = params;
+
+  const { data: runRows, error: runError } = await (supabase.from(RUNS_TABLE) as any)
+    .select("model_id, source, analyze_result, parsed_data, parse_confidence, created_at")
+    .eq("document_id", sourceDocumentId)
+    .order("created_at", { ascending: true });
+  if (runError) {
+    throw new Error(`Failed to load existing analyze run: ${runError.message}`);
+  }
+  if (!Array.isArray(runRows) || runRows.length === 0) return false;
+
+  const copiedRunRows = runRows.map((runRow) => ({
+    document_id: targetDocumentId,
+    storage_path: targetStoragePath,
+    model_id: runRow.model_id,
+    source: runRow.source ?? "fixture",
+    analyze_result: runRow.analyze_result,
+    parsed_data: runRow.parsed_data,
+    parse_confidence: runRow.parse_confidence ?? null,
+    created_at: runRow.created_at ?? undefined,
+  }));
+
+  const { error: insertRunError } = await (supabase.from(RUNS_TABLE) as any).insert(
+    copiedRunRows
+  );
+  if (insertRunError) {
+    throw new Error(`Failed to copy analyze run to target document: ${insertRunError.message}`);
+  }
+
+  const { data: extractionRow, error: extractionError } = await (supabase
+    .from(EXTRACTIONS_TABLE) as any)
+    .select(
+      "status, parsing_path, model_used, decision_reason, parse_confidence, parsed_data, raw_result, raw_xml, error, detected_document_type, detection_confidence, detection_reasons"
+    )
+    .eq("document_id", sourceDocumentId)
+    .maybeSingle();
+  if (extractionError) {
+    throw new Error(`Failed to load existing extraction: ${extractionError.message}`);
+  }
+
+  if (extractionRow) {
+    const { error: upsertExtractionError } = await (supabase
+      .from(EXTRACTIONS_TABLE) as any)
+      .upsert({
+        document_id: targetDocumentId,
+        status: extractionRow.status ?? "succeeded",
+        parsing_path: extractionRow.parsing_path ?? null,
+        model_used: extractionRow.model_used ?? null,
+        decision_reason: extractionRow.decision_reason ?? null,
+        parse_confidence: extractionRow.parse_confidence ?? null,
+        parsed_data: extractionRow.parsed_data ?? null,
+        raw_result: extractionRow.raw_result ?? null,
+        raw_xml: extractionRow.raw_xml ?? null,
+        error: extractionRow.error ?? null,
+        detected_document_type: extractionRow.detected_document_type ?? null,
+        detection_confidence: extractionRow.detection_confidence ?? null,
+        detection_reasons: extractionRow.detection_reasons ?? null,
+      });
+    if (upsertExtractionError) {
+      throw new Error(
+        `Failed to copy extraction to target document: ${upsertExtractionError.message}`
+      );
+    }
+  }
+
+  return true;
+}
+
+async function copyDerivedRowsToDocument(params: {
+  supabase: ReturnType<typeof createSupabaseTestClient>;
+  sourceDocumentId: string;
+  targetDocumentId: string;
+  targetTenantId: string;
+  nowISO: string;
+}): Promise<void> {
+  const { supabase, sourceDocumentId, targetDocumentId, targetTenantId, nowISO } = params;
+
+  const { data: sourceInvoice } = await (supabase.from("invoices") as any)
+    .select(
+      "amount, currency, invoice_date, due_date, invoice_no, iban, e2e_id, vendor_name, buyer_name, link_state, open_amount, matched_at, matched_by, match_reason, run_id, amount_candidates"
+    )
+    .eq("document_id", sourceDocumentId)
+    .limit(1)
+    .maybeSingle();
+
+  if (sourceInvoice) {
+    const { error: upsertInvoiceError } = await (supabase.from("invoices") as any).upsert(
+      {
+        id: targetDocumentId,
+        tenant_id: targetTenantId,
+        document_id: targetDocumentId,
+        amount: sourceInvoice.amount ?? null,
+        currency: sourceInvoice.currency ?? null,
+        invoice_date: sourceInvoice.invoice_date ?? null,
+        due_date: sourceInvoice.due_date ?? null,
+        invoice_no: sourceInvoice.invoice_no ?? null,
+        iban: sourceInvoice.iban ?? null,
+        e2e_id: sourceInvoice.e2e_id ?? null,
+        vendor_name: sourceInvoice.vendor_name ?? null,
+        buyer_name: sourceInvoice.buyer_name ?? null,
+        link_state: sourceInvoice.link_state ?? "unlinked",
+        open_amount: sourceInvoice.open_amount ?? null,
+        matched_at: sourceInvoice.matched_at ?? null,
+        matched_by: sourceInvoice.matched_by ?? null,
+        match_reason: sourceInvoice.match_reason ?? null,
+        run_id: sourceInvoice.run_id ?? null,
+        amount_candidates: sourceInvoice.amount_candidates ?? null,
+        updated_at: nowISO,
+      },
+      { onConflict: "tenant_id,document_id" }
+    );
+    if (upsertInvoiceError) {
+      throw new Error(`Failed to copy invoice to target document: ${upsertInvoiceError.message}`);
+    }
+
+    const { data: sourceItems, error: sourceItemsError } = await (supabase
+      .from("invoice_line_items") as any)
+      .select(
+        "line_index, description, amount_signed, amount_abs, currency, link_state, open_amount, match_group_id, matched_at, meta"
+      )
+      .eq("invoice_id", sourceDocumentId)
+      .order("line_index", { ascending: true });
+    if (sourceItemsError) {
+      throw new Error(
+        `Failed to load source invoice_line_items for copy: ${sourceItemsError.message}`
+      );
+    }
+
+    const { error: deleteItemsError } = await (supabase.from("invoice_line_items") as any)
+      .delete()
+      .eq("tenant_id", targetTenantId)
+      .eq("invoice_id", targetDocumentId);
+    if (deleteItemsError) {
+      throw new Error(`Failed to replace target invoice_line_items: ${deleteItemsError.message}`);
+    }
+
+    if (Array.isArray(sourceItems) && sourceItems.length > 0) {
+      const targetItems = sourceItems.map((item) => ({
+        tenant_id: targetTenantId,
+        invoice_id: targetDocumentId,
+        document_id: targetDocumentId,
+        line_index: item.line_index,
+        description: item.description ?? null,
+        amount_signed: item.amount_signed,
+        amount_abs: item.amount_abs,
+        currency: item.currency,
+        link_state: item.link_state ?? "unlinked",
+        open_amount: item.open_amount ?? item.amount_abs,
+        match_group_id: item.match_group_id ?? null,
+        matched_at: item.matched_at ?? null,
+        meta: item.meta ?? {},
+        updated_at: nowISO,
+      }));
+      const { error: upsertItemsError } = await (supabase.from("invoice_line_items") as any)
+        .upsert(targetItems, { onConflict: "invoice_id,line_index" });
+      if (upsertItemsError) {
+        throw new Error(`Failed to copy invoice_line_items: ${upsertItemsError.message}`);
+      }
+    }
+  }
+
+  const { data: sourceTxRows, error: sourceTxError } = await (supabase
+    .from("bank_transactions") as any)
+    .select(
+      "amount, currency, value_date, booking_date, iban, counterparty_name, end_to_end_id, reference, link_state, open_amount, match_group_id, matched_at, matched_by, match_reason, run_id, source_index, foreign_amount, foreign_currency, exchange_rate, mandant_resolution"
+    )
+    .eq("source_document_id", sourceDocumentId)
+    .order("source_index", { ascending: true });
+  if (sourceTxError) {
+    throw new Error(`Failed to load source bank_transactions for copy: ${sourceTxError.message}`);
+  }
+
+  if (Array.isArray(sourceTxRows) && sourceTxRows.length > 0) {
+    const { error: deleteTxError } = await (supabase.from("bank_transactions") as any)
+      .delete()
+      .eq("tenant_id", targetTenantId)
+      .eq("source_document_id", targetDocumentId);
+    if (deleteTxError) {
+      throw new Error(`Failed to replace target bank_transactions: ${deleteTxError.message}`);
+    }
+
+    const targetTxRows = sourceTxRows.map((tx) => ({
+      tenant_id: targetTenantId,
+      source_document_id: targetDocumentId,
+      source_index: tx.source_index,
+      amount: tx.amount,
+      currency: tx.currency,
+      value_date: tx.value_date,
+      booking_date: tx.booking_date ?? null,
+      iban: tx.iban ?? null,
+      counterparty_name: tx.counterparty_name ?? null,
+      end_to_end_id: tx.end_to_end_id ?? null,
+      reference: tx.reference ?? null,
+      link_state: tx.link_state ?? "unlinked",
+      open_amount: tx.open_amount ?? null,
+      match_group_id: tx.match_group_id ?? null,
+      matched_at: tx.matched_at ?? null,
+      matched_by: tx.matched_by ?? null,
+      match_reason: tx.match_reason ?? null,
+      run_id: tx.run_id ?? null,
+      foreign_amount: tx.foreign_amount ?? null,
+      foreign_currency: tx.foreign_currency ?? null,
+      exchange_rate: tx.exchange_rate ?? null,
+      mandant_resolution: tx.mandant_resolution ?? null,
+      updated_at: nowISO,
+    }));
+    const { error: upsertTxError } = await (supabase.from("bank_transactions") as any).upsert(
+      targetTxRows,
+      { onConflict: "tenant_id,source_document_id,source_index" }
+    );
+    if (upsertTxError) {
+      throw new Error(`Failed to copy bank_transactions: ${upsertTxError.message}`);
+    }
+  }
+}
+
+function normalizeTextValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function parseNumberValue(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const normalized = value.replace(/\s/g, "").replace(",", ".");
+    const num = Number(normalized);
+    return Number.isNaN(num) ? Number.NaN : num;
+  }
+  return Number.NaN;
+}
+
+function coerceDateOnlyValue(value: unknown): string | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function buildStatementReference(tx: Record<string, unknown>): string | null {
+  const parts = [tx.description, tx.reference]
+    .map(normalizeTextValue)
+    .filter((value): value is string => Boolean(value));
+  if (!parts.length) return null;
+  return parts.join("\n");
+}
+
+async function ensureBankTransactionsForDocument(params: {
+  supabase: ReturnType<typeof createSupabaseTestClient>;
+  tenantId: string;
+  documentId: string;
+  nowISO: string;
+}): Promise<number> {
+  const { supabase, tenantId, documentId, nowISO } = params;
+
+  const { count: existingCount, error: countError } = await (supabase
+    .from("bank_transactions") as any)
+    .select("id", { head: true, count: "exact" })
+    .eq("tenant_id", tenantId)
+    .eq("source_document_id", documentId);
+  if (countError) {
+    throw new Error(`Failed to check existing bank_transactions: ${countError.message}`);
+  }
+  if ((existingCount ?? 0) > 0) return 0;
+
+  const { data: extractionRow, error: extractionError } = await (supabase
+    .from(EXTRACTIONS_TABLE) as any)
+    .select("status, detected_document_type, parsed_data")
+    .eq("document_id", documentId)
+    .eq("status", "succeeded")
+    .maybeSingle();
+  if (extractionError) {
+    throw new Error(`Failed to load extraction for bank tx backfill: ${extractionError.message}`);
+  }
+  if (!extractionRow || extractionRow.detected_document_type !== "bank_statement") return 0;
+
+  const parsed = (extractionRow.parsed_data ?? {}) as Record<string, unknown>;
+  const parsedCurrency = normalizeTextValue(parsed.currency);
+  const parsedIban = normalizeTextValue(parsed.iban);
+  const transactions = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+  if (!transactions.length) return 0;
+
+  const payload = transactions
+    .map((row, index) => {
+      if (!row || typeof row !== "object") return null;
+      const tx = row as Record<string, unknown>;
+      const bookingDate = coerceDateOnlyValue(tx.bookingDate);
+      const valueDate = coerceDateOnlyValue(tx.valueDate) ?? bookingDate;
+      if (!valueDate) return null;
+
+      const amount = parseNumberValue(tx.amount);
+      if (!Number.isFinite(amount)) return null;
+
+      const currency = normalizeTextValue(tx.currency) || parsedCurrency || "EUR";
+      const foreignAmountRaw = parseNumberValue(tx.foreignAmount);
+      const foreignAmount = Number.isFinite(foreignAmountRaw) ? foreignAmountRaw : null;
+      const foreignCurrency = normalizeTextValue(tx.foreignCurrency);
+      const exchangeRateRaw = parseNumberValue(tx.exchangeRate);
+      const exchangeRate = Number.isFinite(exchangeRateRaw) ? exchangeRateRaw : null;
+      const reference = buildStatementReference(tx);
+      const counterpartyName = normalizeTextValue(tx.counterpartyName);
+      const counterpartyIban = normalizeTextValue(tx.counterpartyIban) || parsedIban || null;
+      const endToEndId = normalizeTextValue(tx.endToEndId);
+
+      return {
+        tenant_id: tenantId,
+        source_document_id: documentId,
+        source_index: index,
+        amount,
+        currency,
+        foreign_amount: foreignAmount,
+        foreign_currency: foreignCurrency,
+        exchange_rate: exchangeRate,
+        value_date: valueDate,
+        booking_date: bookingDate,
+        iban: counterpartyIban,
+        counterparty_name: counterpartyName,
+        end_to_end_id: endToEndId,
+        reference,
+        created_at: nowISO,
+        updated_at: nowISO,
+      };
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+
+  if (!payload.length) return 0;
+
+  const { error: upsertError } = await (supabase.from("bank_transactions") as any).upsert(
+    payload,
+    { onConflict: "tenant_id,source_document_id,source_index" }
+  );
+  if (upsertError) {
+    throw new Error(`Failed to backfill bank_transactions for duplicate document: ${upsertError.message}`);
+  }
+
+  return payload.length;
 }
 
 async function run() {
   await loadEnvFiles();
+  const nowISO = new Date().toISOString();
 
   const endpoint = Deno.env.get("AZURE_DOCINT_ENDPOINT") ?? "";
   const apiKey = Deno.env.get("AZURE_DOCINT_KEY") ?? "";
@@ -304,26 +667,79 @@ async function run() {
     );
     const duplicateDoc = await findDocumentByHash(supabase, tenantId, uploadMeta.fileHash);
     if (duplicateDoc) {
+      const backfilledTxCount = await ensureBankTransactionsForDocument({
+        supabase,
+        tenantId,
+        documentId: duplicateDoc.id,
+        nowISO,
+      });
       console.log("[azure-analyze] duplicate_reused", {
         fileName,
         tenant_id: tenantId,
         document_id: duplicateDoc.id,
         file_hash_prefix: uploadMeta.fileHash.slice(0, 12),
+        backfilled_bank_transactions: backfilledTxCount,
       });
       await removeFile(supabase, BUCKET, storagePath);
       continue;
     }
 
-    const documentId = await createDocumentRow({
-      supabase,
-      tenantId,
-      storageBucket: BUCKET,
-      storagePath,
-      originalFilename: fileName,
-      mimeType: uploadMeta.contentType,
-      fileSize: uploadMeta.size,
-      fileHash: uploadMeta.fileHash,
-    });
+    let documentId: string | null = null;
+    const duplicateAnyTenant = await findDocumentByHashAnyTenant(supabase, uploadMeta.fileHash);
+    if (duplicateAnyTenant && duplicateAnyTenant.tenant_id !== tenantId) {
+      documentId = await createDocumentRow({
+        supabase,
+        tenantId,
+        storageBucket: BUCKET,
+        storagePath,
+        originalFilename: fileName,
+        mimeType: uploadMeta.contentType,
+        fileSize: uploadMeta.size,
+        fileHash: uploadMeta.fileHash,
+      });
+
+      const copied = await copyAnalyzeDataToDocument({
+        supabase,
+        sourceDocumentId: duplicateAnyTenant.id,
+        targetDocumentId: documentId,
+        targetStoragePath: storagePath,
+      });
+
+      if (copied) {
+        await copyDerivedRowsToDocument({
+          supabase,
+          sourceDocumentId: duplicateAnyTenant.id,
+          targetDocumentId: documentId,
+          targetTenantId: tenantId,
+          nowISO,
+        });
+        console.log("[azure-analyze] duplicate_copied_to_current_tenant", {
+          fileName,
+          tenant_id: tenantId,
+          source_document_id: duplicateAnyTenant.id,
+          source_tenant_id: duplicateAnyTenant.tenant_id,
+          target_document_id: documentId,
+          file_hash_prefix: uploadMeta.fileHash.slice(0, 12),
+        });
+        if (!KEEP_FILES) {
+          await removeFile(supabase, BUCKET, storagePath);
+        }
+        continue;
+      }
+    }
+
+    if (!documentId) {
+      documentId = await createDocumentRow({
+        supabase,
+        tenantId,
+        storageBucket: BUCKET,
+        storagePath,
+        originalFilename: fileName,
+        mimeType: uploadMeta.contentType,
+        fileSize: uploadMeta.size,
+        fileHash: uploadMeta.fileHash,
+      });
+    }
 
     try {
       const isImage = isImageExtension(fileExt);
