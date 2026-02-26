@@ -1,3 +1,5 @@
+import { normalizeString } from "./upsert-helpers.ts";
+
 export type InvoiceLineItemInput = {
   description?: string | null;
   totalPrice?: number | null;
@@ -73,12 +75,6 @@ function toFiniteNumber(value: unknown): number {
     return Number.isFinite(num) ? num : Number.NaN;
   }
   return Number.NaN;
-}
-
-function normalizeString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
 }
 
 function normalizeCurrency(value?: string | null): string {

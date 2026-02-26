@@ -134,7 +134,6 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "alter saldo",
     "neuer saldo",
     "valuta",
-    "buchung",
   ];
   const invoiceKeywords = ["rechnung", "invoice", "rechnungsnummer", "invoice no"];
   const taxNoticeKeywords = [
@@ -162,6 +161,15 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "gesamtbrutto",
     "nettoentgelt",
   ];
+
+  const antiStatementKeywords = [
+    "hotel", "zimmer", "nacht", "uebernachtung",
+    "check-in", "check-out",
+    "mietwagen", "mietvertrag", "fahrzeug", "mietzeitraum",
+    "buchungsbestaetigung", "reservierung",
+  ];
+  const antiStatementHitCount = antiStatementKeywords.filter((kw) => normalized.includes(kw)).length;
+  const hasAntiStatementHint = antiStatementHitCount >= 2;
 
   const bankKeywordHit = bankKeywords.some((kw) => normalized.includes(kw));
   const bankTransactionLineCount = countTransactionLines(lines);
@@ -273,6 +281,7 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
 
   const bankEligible =
     !hasTaxNoticeHint &&
+    !hasAntiStatementHint &&
     (bankCriteriaCount >= 2 ||
       (bankCriteriaCount >= 1 && bankStructureScore >= 0.15) ||
       hasKontoauszugKeyword);

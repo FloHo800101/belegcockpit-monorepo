@@ -318,7 +318,19 @@ export function findTransactionBlock(
       const lineAmount = parseAmount(lines[j]);
       if (lineAmount == null) continue;
       if (amountsEqual(lineAmount, amount) || amountsEqualIgnoringSign(lineAmount, amount)) {
-        return { dateIndex: i, amountIndex: j, amountMatched: true };
+        // Look for a closer date line between i+1 and j that also matches the
+        // target date.  This handles bank statements (e.g. ING) where a valuta
+        // date line from the previous transaction appears before the booking
+        // date of the current transaction — both share the same calendar date.
+        // Picking the closest date to the amount avoids consuming the previous
+        // transaction's reference block as the current transaction's description.
+        let bestDateIndex = i;
+        for (let k = i + 1; k < j; k += 1) {
+          if (lineStartsWithDate(lines[k], dateIso, referenceYear)) {
+            bestDateIndex = k;
+          }
+        }
+        return { dateIndex: bestDateIndex, amountIndex: j, amountMatched: true };
       }
     }
 
@@ -376,6 +388,8 @@ export function extractTransactionsFromItems(
     const block = findTransactionBlock(lines, cursor, dateIso, amount, referenceYear);
     const contextWindow = buildTransactionContextWindow(lines, cursor, dateIso, referenceYear);
     if (block) {
+      // Advance cursor past the amount (or date fallback) to avoid re-matching
+      // the same lines for the next item.
       cursor = (block.amountMatched ? block.amountIndex : block.dateIndex) + 1;
     }
     return { block, contextWindow, dateIso, amount, fields };
@@ -439,11 +453,6 @@ export function extractTransactionsFromItems(
       if (parsed.counterpartyName) {
         counterpartyName = parsed.counterpartyName;
       }
-    }
-
-    // Fee types have no counterparty
-    if (bookingType === "fee") {
-      counterpartyName = null;
     }
 
     const tx: ParsedTransaction = {
@@ -566,10 +575,6 @@ export function extractTransactionsFromStatementLines(
       if (parsed.counterpartyName) {
         counterpartyName = parsed.counterpartyName;
       }
-    }
-
-    if (bookingType === "fee") {
-      counterpartyName = null;
     }
 
     const tx: ParsedTransaction = {
