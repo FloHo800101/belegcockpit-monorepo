@@ -134,6 +134,9 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "alter saldo",
     "neuer saldo",
     "valuta",
+    "buchungstag",
+    "buchungstext",
+    "buchung / verwendungszweck",
   ];
   const invoiceKeywords = ["rechnung", "invoice", "rechnungsnummer", "invoice no"];
   const taxNoticeKeywords = [
@@ -161,6 +164,22 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "gesamtbrutto",
     "nettoentgelt",
   ];
+  const receiptKeywords = [
+    "einzelkarte",
+    "fahrkarte",
+    "fahrschein",
+    "quittung",
+    "kassenbon",
+    "kassenbeleg",
+    "reisekosten",
+    "ticket",
+    "online-ticket",
+    "bitte entwerten",
+    "please validate",
+  ];
+
+  const receiptKeywordHitCount = receiptKeywords.filter((kw) => normalized.includes(kw)).length;
+  const receiptReasons: string[] = [];
 
   const antiStatementKeywords = [
     "hotel", "zimmer", "nacht", "uebernachtung",
@@ -228,7 +247,7 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
 
   let invoiceStructureScore = 0;
   const invoiceNumberHit =
-    /(rechnungsnummer|invoice no|invoice number)\s*[:#]?\s*[a-z0-9\-\/]+/i.test(
+    /(rechnungsnummer|rechnungsnr\.?|rechnung\s*nr\.?|re-nr\.?|invoice\s*no\.?|invoice\s*number|invoice\s*#)\s*[:#]?\s*[a-z0-9\-\/]+/i.test(
       text
     );
   if (invoiceNumberHit) {
@@ -317,6 +336,29 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
       documentType: "invoice",
       confidence: Math.max(invoiceScore, 0.75),
       reasons: [...new Set(invoiceReasons)],
+    };
+  }
+
+  // Receipt detection: tickets, receipts, travel expenses
+  if (receiptKeywordHitCount >= 2 && !bankKeywordHit && !hasKontoauszugKeyword) {
+    receiptReasons.push("keyword:receipt");
+    if (receiptKeywordHitCount >= 3) receiptReasons.push("keyword:receipt_strong");
+    const receiptScore = Math.min(1, receiptKeywordHitCount * 0.2 + 0.2);
+    return {
+      documentType: "receipt",
+      confidence: receiptScore,
+      reasons: receiptReasons,
+    };
+  }
+
+  // Invoice keyword priority: "RECHNUNG" explicitly names the document type.
+  // If present and no bank keywords found, invoice wins over bank_statement
+  // (avoids false bank_statement from IBAN in payment footer + dated line items).
+  if (invoiceKeywordHit && !bankKeywordHit && invoiceEligible) {
+    return {
+      documentType: "invoice",
+      confidence: Math.max(invoiceScore, 0.6),
+      reasons: [...new Set([...invoiceReasons, "priority:invoice_keyword"])],
     };
   }
 

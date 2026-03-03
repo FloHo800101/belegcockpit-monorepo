@@ -54,7 +54,7 @@ export function buildInvoiceLineItemRows(params: {
       amount_abs: amountAbs,
       currency: normalizedCurrency,
       link_state: "unlinked",
-      open_amount: amountAbs,
+      open_amount: amountSigned > 0 ? amountAbs : 0,
       match_group_id: null,
       matched_at: null,
       meta: {

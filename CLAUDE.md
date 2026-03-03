@@ -91,6 +91,28 @@ Bei **jeder** Änderung im Backend (`backend/`) MUSS `backend/tests-backend/READ
 - Neue Skripte/Befehle → in "Typical flow" und Befehlsliste aufnehmen
 - Geänderte Architektur (neue Module, umbenannte Dateien) → Dokumentation anpassen
 
+### Spezialisierte Subagenten (Tech. Team)
+Für spezialisierte Aufgaben stehen vordefinierte Subagenten im Ordner `Tech. Team/` bereit (Übersicht: `Tech. Team/_Index.md`).
+Claude soll bei passenden Aufgaben die jeweilige `.md`-Datei lesen und die Rolle als Subagent übernehmen.
+
+**Für Belegcockpit relevante Agenten:**
+
+| Agent | Rolle | Modell |
+|---|---|---|
+| **Black TypeScript** | TypeScript Senior Developer | Sonnet |
+| **SuperBase** | Supabase Specialist | Sonnet |
+| **React-or** | React Frontend Developer | Sonnet |
+| **Orakel** | Kritischer Produktstratege | Opus |
+| **Synapse** | AI/Prompt Engineer | Opus |
+| **Flow** | UX/Onboarding Designer | Opus |
+| **Testing Titan** | QA & Testing Specialist | Sonnet |
+
+**Sinnvolle Kombinationen:**
+- **Black TypeScript + React-or** → Backend + Frontend gleichzeitig
+- **Synapse + SuperBase** → Prompt-Design + Edge Function gleichzeitig
+- **Orakel alleine** → PRD-Review vor dem Bauen (immer zuerst)
+- **Testing Titan nach jedem Feature** → Tests schreiben, Lücken finden, Bericht liefern
+
 ### Refactoring-Prüfung nach jeder Änderung
 Nach Abschluss einer Backend- oder Frontend-Änderung MUSS eine kurze Refactoring-Prüfung durchgeführt werden:
 - Gibt es duplizierte Logik, die konsolidiert werden kann?
@@ -99,53 +121,8 @@ Nach Abschluss einer Backend- oder Frontend-Änderung MUSS eine kurze Refactorin
 - Stimmen Namenskonventionen noch (z.B. nach Umbenennung)?
 - Ergebnisse als konkrete Vorschläge an den Benutzer melden (nicht selbstständig umsetzen)
 
----
-
-## Workflow Orchestration
-
-### 1. Plan Mode Default
-- Enter plan mode for any non-trivial task (3+ steps or architectural decisions)
-- If something goes sideways, STOP and re-plan immediately — don't keep pushing
-- Use plan mode for verification steps, not just building
-- Write detailed specs upfront to reduce ambiguity
-
-### 2. Subagent Strategy
-- Use subagents liberally to keep main context window clean
-- Offload research, exploration, and parallel analysis to subagents
-- For complex problems, throw more compute at it via subagents
-- One task per subagent for focused execution
-
-### 3. Self-Improvement Loop
-- After any correction from the user: update `tasks/lessons.md` with the pattern
-- Write rules for yourself that prevent the same mistake
-- Ruthlessly iterate on these lessons until mistake rate drops
-- Review lessons at session start for relevant project
-
-### 4. Verification Before Done
-- Never mark a task complete without proving it works
-- Diff behavior between main and your changes when relevant
-- Ask yourself: "Would a staff engineer approve this?"
-- Run tests, check logs, demonstrate correctness
-
-### 5. Demand Elegance (Balanced)
-- For non-trivial changes: pause and ask "is there a more elegant way?"
-- If a fix feels hacky: "Knowing everything I know now, implement the elegant solution"
-- Skip this for simple, obvious fixes — don't over-engineer
-- Challenge your own work before presenting it
-
-### 6. Autonomous Bug Fixing
-- When given a bug report: just fix it. Don't ask for hand-holding
-- Point at logs, errors, failing tests — then resolve them
-- Zero context switching required from the user
-- Go fix failing CI tests without being told how
-
----
-
-## Task Management
-
-1. **Plan First**: Write plan to `tasks/todo.md` with checkable items
-2. **Verify Plan**: Check in before starting implementation
-3. **Track Progress**: Mark items complete as you go
-4. **Explain Changes**: High-level summary at each step
-5. **Document Results**: Add review section to `tasks/todo.md`
-6. **Capture Lessons**: Update `tasks/lessons.md` after corrections
+### Session Summary pflegen
+- Zu **Beginn** jeder Session MUSS `SESSION_LOG.md` gelesen werden, um den Kontext der letzten Arbeitsschritte zu kennen
+- Am **Ende** jeder Session MUSS ein neuer Eintrag in `SESSION_LOG.md` geschrieben werden
+- Neue Einträge werden **oben** angefügt (neueste zuerst)
+- Format gemäß der Vorlage in der Datei (Datum, Agenten, Aufgaben, geänderte Dateien, Entscheidungen, Learnings, offene Punkte)

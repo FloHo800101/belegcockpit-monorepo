@@ -191,20 +191,25 @@ async function main() {
 }
 
 function resolveInvoiceAmount(parsed: ParsedDocument): number | null {
-  const fromTotals = toFiniteNumber(parsed.totalGross) ?? toFiniteNumber(parsed.totalNet);
+  const fromTotals = toFinitePositive(parsed.totalGross) ?? toFinitePositive(parsed.totalNet);
   if (fromTotals != null) return fromTotals;
 
   const lineItems = parsed.lineItems ?? [];
-  let sum = 0;
+  let signedSum = 0;
+  let positiveSum = 0;
   let hasValue = false;
   for (const item of lineItems) {
     const value = toFiniteNumber(item?.totalPrice);
     if (value == null) continue;
-    sum += Math.abs(value);
+    signedSum += value;
+    if (value > 0) positiveSum += value;
     hasValue = true;
   }
   if (!hasValue) return null;
-  return Math.round(sum * 100) / 100;
+
+  const amount = signedSum > 0 ? signedSum : positiveSum;
+  if (amount <= 0) return null;
+  return Math.round(amount * 100) / 100;
 }
 
 function toFiniteNumber(value: unknown): number | null {
@@ -214,6 +219,12 @@ function toFiniteNumber(value: unknown): number | null {
     if (Number.isFinite(normalized)) return normalized;
   }
   return null;
+}
+
+function toFinitePositive(value: unknown): number | null {
+  const num = toFiniteNumber(value);
+  if (num == null || num <= 0) return null;
+  return Math.round(num * 100) / 100;
 }
 
 async function loadTenantId(documentId: string): Promise<string | null> {

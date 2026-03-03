@@ -65,6 +65,16 @@ Run all commands below from `backend/`.
 
 - `tests-backend/integration/backfill-invoices.ts`
   Takes invoice-like `document_extractions.parsed_data` and upserts `invoices`.
+  Amount resolution via `resolveInvoiceAmount()` (shared module in `invoice-amount-candidates.ts`):
+  prefers totalGross/totalNet, falls back to signed line item sum,
+  and uses positive-only sum when signed total is zero or negative
+  (e.g. hotel invoices where a payment line cancels out the charges).
+
+- `tests-backend/integration/invoice-amount-resolve.test.ts`
+  Deno unit tests for `resolveInvoiceAmount`: totalGross/totalNet priority,
+  signed line item summing, discount handling, hotel invoice with payment
+  (negative line item), and Math.abs regression guard.
+  Run with: `deno test tests-backend/integration/invoice-amount-resolve.test.ts --no-lock`
 
 - `tests-backend/integration/azure-bank-statement-fx.test.ts`
   Deno unit tests for foreign currency detection and counterparty extraction in bank statement mapper.
@@ -77,13 +87,26 @@ Run all commands below from `backend/`.
   and fallback through candidate list.
   Run with: `deno test tests-backend/integration/azure-invoice-vendor-name.test.ts --no-lock`
 
+- `tests-backend/integration/azure-receipt-multi.test.ts`
+  Deno unit tests for receipt mapper: multi-receipt pages, OCR fallback, currency fix, date fallback,
+  DB Online-Ticket detection (specific bank keywords), amount-reversal sanity check (Total < Subtotal swap),
+  and document type detection for receipt keywords.
+  Run with: `deno test tests-backend/integration/azure-receipt-multi.test.ts --no-lock`
+
 ## Azure Mapper Architecture
 
 The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and uses a facade pattern:
 
 - **`azure-mappers.ts`** — Facade, re-exports the 4 mapper functions.
 - **`invoice-mapper.ts`** — Handles invoices (prebuilt-invoice model).
-- **`receipt-mapper.ts`** — Handles receipts (prebuilt-receipt model).
+- **`receipt-mapper.ts`** — Handles receipts (prebuilt-receipt model). Supports multi-receipt pages
+  (e.g. travel expense scans with multiple tickets on one page):
+  1. Multi-document: Iterates over all `documents[]` when Azure detects multiple receipts.
+  2. OCR fallback: When only one document found but OCR text contains multiple `€ X,XX` amounts,
+     extracts all amounts as line items and sums them as `totalGross`.
+  3. Currency fix: Prefers OCR-based currency detection (`€` → EUR) over Azure field values.
+  4. Date fallback: When Azure has no `TransactionDate`, extracts the latest date from OCR text
+     (e.g. `DD.MM.YYYY` patterns) as `invoiceDate`. Applied in all three code paths.
 - **`bank-statement-mapper.ts`** — Handles bank statements. Orchestrates three extraction paths:
   1. `extractTransactionsFromItems` — From Azure-extracted structured items.
   2. `extractTransactionsFromStatementLines` — From OCR line patterns.
@@ -135,11 +158,32 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `toNumber()` — Converts number/string values (handles German comma decimals).
   - `buildTransactionReference()` — Prefers dedicated reference field over description.
 
+### Document type detection (`document-type-detection.ts`)
+
+Classifies documents into `invoice`, `bank_statement`, `receipt`, or `unknown` using:
+- Keyword matching (bank, invoice, tax notice, payroll, receipt)
+- Structural patterns (transaction lines, balances, invoice numbers)
+- Azure field presence (InvoiceId, TaxDetails, etc.)
+- Invoice keyword priority: When "Rechnung"/"Invoice" is present and no bank keywords
+  match, invoice wins over bank_statement (prevents false classification of invoices
+  with IBAN in payment footer and dated line items).
+- Invoice number detection: Matches abbreviations like `Rechnungsnr.`, `Re-Nr.`,
+  `Invoice No.` etc. in addition to full forms.
+
+Bank keywords use specific terms (`buchungstag`, `buchungstext`, `buchung / verwendungszweck`)
+instead of the generic `buchung` to avoid false positives on train tickets ("Die Buchung Ihres
+Online-Tickets").
+
+Receipt detection uses keywords: `einzelkarte`, `fahrkarte`, `fahrschein`, `quittung`,
+`kassenbon`, `kassenbeleg`, `reisekosten`, `ticket`, `bitte entwerten`, `please validate`.
+Requires >= 2 keyword hits for `receipt` classification.
+
 ## Data flow
 
 ```
 PDF/Image → Azure Document Intelligence → analyze_result (JSON)
-         → document_analyze_runs.parsed_data (via mapper)
+         → document type detection (keyword + structure + Azure signals)
+         → document_analyze_runs.parsed_data (via appropriate mapper)
          → document_extractions.parsed_data (via backfill-extractions)
          → bank_transactions / invoices (via backfill scripts)
 ```

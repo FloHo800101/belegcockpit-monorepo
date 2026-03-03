@@ -1,4 +1,5 @@
 // Run from backend/: pnpm test:azure-mappers
+// $env:FORCE_REPARSE='1'; pnpm.cmd test:azure-mappers
 //
 // Integrationstest: Liest bestehende Azure-Analyze-Ergebnisse aus document_analyze_runs,
 // wendet die passenden Mapper (Invoice, Receipt, BankStatement, Layout) an und validiert

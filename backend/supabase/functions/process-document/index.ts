@@ -3,7 +3,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { processDocument } from "../_shared/processor.ts";
-import { buildInvoiceAmountCandidates } from "../_shared/invoice-amount-candidates.ts";
+import { buildInvoiceAmountCandidates, resolveInvoiceAmount } from "../_shared/invoice-amount-candidates.ts";
 import { buildInvoiceLineItemRows } from "../_shared/invoice-line-items.ts";
 import { normalizeString, coerceDate, toNumber, buildTransactionReference } from "../_shared/upsert-helpers.ts";
 
@@ -256,7 +256,7 @@ async function upsertInvoice(params: {
     return;
   }
 
-  const amount = parsed.totalGross ?? parsed.totalNet ?? null;
+  const amount = resolveInvoiceAmount(parsed);
   const currency = normalizeString(parsed.currency) ?? "EUR";
   const invoiceDate = coerceDate(parsed.invoiceDate);
   const dueDate = coerceDate(parsed.dueDate);
