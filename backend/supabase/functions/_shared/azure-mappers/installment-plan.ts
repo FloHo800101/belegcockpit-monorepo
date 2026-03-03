@@ -68,6 +68,8 @@ export function extractInvoiceNumber(content: string | null | undefined): string
     "Rechnung Nr",
     "Rechnungsnr",
     "Re-Nr",
+    "Auftragsnummer",
+    "Bestellnummer",
     "Invoice number",
     "Invoice no",
     "Invoice #",

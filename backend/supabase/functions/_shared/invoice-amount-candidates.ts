@@ -64,6 +64,58 @@ export function buildInvoiceAmountCandidates(
   return candidates;
 }
 
+export type ResolveAmountInput = {
+  totalGross?: number | null;
+  totalNet?: number | null;
+  lineItems?: Array<{ totalPrice?: number | null } | null> | null;
+};
+
+/**
+ * Resolves the primary invoice amount.
+ * 1. Prefers totalGross / totalNet from Azure fields.
+ * 2. Falls back to the signed sum of line items (respects discounts / credits).
+ * 3. When the signed sum is zero or negative (e.g. hotel invoice where a
+ *    payment line cancels out the charges), uses the sum of positive items
+ *    only (= total charges before payments).
+ */
+export function resolveInvoiceAmount(parsed: ResolveAmountInput | null | undefined): number | null {
+  if (!parsed) return null;
+
+  const fromTotals = toFinitePositive(parsed.totalGross) ?? toFinitePositive(parsed.totalNet);
+  if (fromTotals != null) return fromTotals;
+
+  const lineItems = parsed.lineItems ?? [];
+  let signedSum = 0;
+  let positiveSum = 0;
+  let hasValue = false;
+  for (const item of lineItems) {
+    const value = toFiniteNumber(item?.totalPrice);
+    if (value == null) continue;
+    signedSum += value;
+    if (value > 0) positiveSum += value;
+    hasValue = true;
+  }
+  if (!hasValue) return null;
+
+  const amount = signedSum > 0 ? signedSum : positiveSum;
+  if (amount <= 0) return null;
+  return roundCurrency(amount);
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const num = Number(value.replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(num) ? num : null;
+  }
+  return null;
+}
+
+function toFinitePositive(value: unknown): number | null {
+  const num = toFiniteNumber(value);
+  return num != null && num > 0 ? roundCurrency(num) : null;
+}
+
 function roundCurrency(value: number): number {
   return Math.round(value * 100) / 100;
 }

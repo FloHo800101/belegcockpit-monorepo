@@ -188,6 +188,27 @@ export async function processDocument(
         }
       }
 
+      if (detectionMeta.documentType === "receipt") {
+        const receiptResult = await detectReceiptLikeDocument(supabase, filePath, bucket);
+        if (receiptResult.parsed) {
+          return {
+            status:
+              receiptResult.confidence && receiptResult.confidence > 0.7
+                ? "parsed"
+                : "needs_review",
+            parsing_path: "azure_receipt",
+            confidence: receiptResult.confidence,
+            detected_document_type: "receipt",
+            detection_confidence: detectionMeta.confidence,
+            detection_reasons: detectionMeta.reasons,
+            parsed_data: receiptResult.parsed,
+            raw_result: receiptResult.rawResponse ?? null,
+            model_used: "prebuilt-receipt",
+            decision_reason: "detected:receipt",
+          };
+        }
+      }
+
       if (detectionMeta.documentType === "invoice") {
         const invoiceResult = mapAzureInvoiceToParseResult(azureInvoiceAnalyze);
         if (invoiceResult.parsed) {

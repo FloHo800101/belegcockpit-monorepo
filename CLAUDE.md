@@ -91,6 +91,28 @@ Bei **jeder** Änderung im Backend (`backend/`) MUSS `backend/tests-backend/READ
 - Neue Skripte/Befehle → in "Typical flow" und Befehlsliste aufnehmen
 - Geänderte Architektur (neue Module, umbenannte Dateien) → Dokumentation anpassen
 
+### Spezialisierte Subagenten (Tech. Team)
+Für spezialisierte Aufgaben stehen vordefinierte Subagenten im Ordner `Tech. Team/` bereit (Übersicht: `Tech. Team/_Index.md`).
+Claude soll bei passenden Aufgaben die jeweilige `.md`-Datei lesen und die Rolle als Subagent übernehmen.
+
+**Für Belegcockpit relevante Agenten:**
+
+| Agent | Rolle | Modell |
+|---|---|---|
+| **Black TypeScript** | TypeScript Senior Developer | Sonnet |
+| **SuperBase** | Supabase Specialist | Sonnet |
+| **React-or** | React Frontend Developer | Sonnet |
+| **Orakel** | Kritischer Produktstratege | Opus |
+| **Synapse** | AI/Prompt Engineer | Opus |
+| **Flow** | UX/Onboarding Designer | Opus |
+| **Testing Titan** | QA & Testing Specialist | Sonnet |
+
+**Sinnvolle Kombinationen:**
+- **Black TypeScript + React-or** → Backend + Frontend gleichzeitig
+- **Synapse + SuperBase** → Prompt-Design + Edge Function gleichzeitig
+- **Orakel alleine** → PRD-Review vor dem Bauen (immer zuerst)
+- **Testing Titan nach jedem Feature** → Tests schreiben, Lücken finden, Bericht liefern
+
 ### Refactoring-Prüfung nach jeder Änderung
 Nach Abschluss einer Backend- oder Frontend-Änderung MUSS eine kurze Refactoring-Prüfung durchgeführt werden:
 - Gibt es duplizierte Logik, die konsolidiert werden kann?
@@ -98,3 +120,9 @@ Nach Abschluss einer Backend- oder Frontend-Änderung MUSS eine kurze Refactorin
 - Sind Funktionen zu lang oder zu komplex geworden (>50 Zeilen)?
 - Stimmen Namenskonventionen noch (z.B. nach Umbenennung)?
 - Ergebnisse als konkrete Vorschläge an den Benutzer melden (nicht selbstständig umsetzen)
+
+### Session Summary pflegen
+- Zu **Beginn** jeder Session MUSS `SESSION_LOG.md` gelesen werden, um den Kontext der letzten Arbeitsschritte zu kennen
+- Am **Ende** jeder Session MUSS ein neuer Eintrag in `SESSION_LOG.md` geschrieben werden
+- Neue Einträge werden **oben** angefügt (neueste zuerst)
+- Format gemäß der Vorlage in der Datei (Datum, Agenten, Aufgaben, geänderte Dateien, Entscheidungen, Learnings, offene Punkte)
