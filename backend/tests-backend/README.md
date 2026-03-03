@@ -13,6 +13,9 @@ Run all commands below from `backend/`.
 
 ## Typical flow for bank statements
 
+0) Seed analyze runs from existing live extractions (only if needed for historical docs).
+   - `pnpm test:backfill-analyze-runs`
+
 1) Re-parse Azure analyze runs (updates `document_analyze_runs.parsed_data`).
    - `FORCE_REPARSE=1 pnpm test:azure-mappers`
 
@@ -23,6 +26,9 @@ Run all commands below from `backend/`.
    - `pnpm test:backfill-bank-transactions`
 
 ## Typical flow for invoices/receipts
+
+0) Seed analyze runs from existing live extractions (only if needed for historical docs).
+   - `pnpm test:backfill-analyze-runs`
 
 1) Re-parse Azure analyze runs (if needed).
    - `FORCE_REPARSE=1 pnpm test:azure-mappers`
@@ -42,9 +48,16 @@ Run all commands below from `backend/`.
 - `tests-backend/integration/azure-mappers-cases.ts`
   Re-maps `document_analyze_runs.analyze_result` into `document_analyze_runs.parsed_data`.
   Use `FORCE_REPARSE=1` to re-run for all rows.
+  Supports optional filters: `TENANT_ID`, `FROM`, `TO`, `LIMIT_DOCS`.
+
+- `tests-backend/integration/backfill-analyze-runs-from-extractions.ts`
+  Seeds missing `document_analyze_runs` entries (`source=live_seed`) from existing
+  `document_extractions.raw_result` for Azure-based live documents.
+  Supports optional filters: `TENANT_ID`, `FROM`, `TO`, `LIMIT_DOCS`, `DRY_RUN=1`.
 
 - `tests-backend/integration/backfill-extractions-from-analyze.ts`
   Uses analyze runs to upsert `document_extractions` (parsed data + detection meta).
+  Supports optional filters: `TENANT_ID`, `FROM`, `TO`, `LIMIT_DOCS`.
 
 - `tests-backend/integration/backfill-bank-transactions.ts`
   Takes `document_extractions.parsed_data.transactions` and upserts `bank_transactions`.
@@ -116,13 +129,18 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `lineStartsWithDate()` — Strict date matching (only lines starting with a date), used to
     prevent value dates in parentheses from being misidentified as transaction boundaries.
   - `findTransactionBlock()` — Locates OCR lines for a given transaction (date + amount).
-    Scans all matching date lines before falling back to `amountMatched: false`, avoiding
-    false locks on value date lines in reference blocks.
+    When multiple date lines match within the lookahead window, picks the **closest** date
+    to the amount line. This prevents valuta dates of previous transactions from being
+    mistaken as the block start (e.g. ING statements where all transactions share the
+    same booking date). Falls back to `amountMatched: false` if no amount match is found.
   - `isStatementBoilerplateLine()` — Detects bank statement page headers, footers, balance
     summaries, legal text, and barcode IDs. Used as a stop-signal when collecting reference
     blocks to prevent page-break noise from bleeding into transaction data.
   - `mergeBankStatementTransactions()` — Deduplicates and merges items-based and line-based
-    transactions using date+amount matching and text similarity scoring.
+    transactions using date+amount matching and text similarity scoring. Post-merge filter
+    removes unmatched lines whose date+absolute amount matches any items-sourced transaction,
+    catching phantom lines (ING value-date echoes) and opposite-sign duplicates (Qonto
+    Eingänge/Ausgänge sections).
 - **`bank-statement-fx.ts`** — Foreign currency detection and exchange rate extraction.
 - **`parse-utils.ts`** — Shared parsing (dates, amounts, IBAN, BIC, currency, text normalization).
   - `extractIban()` — Two-stage IBAN extraction with length validation (15-34 chars) and
@@ -133,6 +151,12 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
     values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, and invoice numbers.
 - **`installment-plan.ts`** — Tax installment plan and invoice number extraction.
+- **`upsert-helpers.ts`** — Shared utility functions used by both the Edge Function
+  (`process-document`) and Node.js backfill scripts:
+  - `normalizeString()` — Trims whitespace, returns null for empty/non-string values.
+  - `coerceDate()` — Parses ISO, DD.MM.YYYY, and YYYYMMDD date formats to `YYYY-MM-DD`.
+  - `toNumber()` — Converts number/string values (handles German comma decimals).
+  - `buildTransactionReference()` — Prefers dedicated reference field over description.
 
 ### Document type detection (`document-type-detection.ts`)
 
@@ -163,6 +187,9 @@ PDF/Image → Azure Document Intelligence → analyze_result (JSON)
          → document_extractions.parsed_data (via backfill-extractions)
          → bank_transactions / invoices (via backfill scripts)
 ```
+
+Live `process-document` writes `document_extractions` directly and now also persists
+Azure-based runs in `document_analyze_runs` (`source=live_process`) for reprocessing.
 
 ## Notes
 

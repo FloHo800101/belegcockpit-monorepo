@@ -181,6 +181,15 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
   const receiptKeywordHitCount = receiptKeywords.filter((kw) => normalized.includes(kw)).length;
   const receiptReasons: string[] = [];
 
+  const antiStatementKeywords = [
+    "hotel", "zimmer", "nacht", "uebernachtung",
+    "check-in", "check-out",
+    "mietwagen", "mietvertrag", "fahrzeug", "mietzeitraum",
+    "buchungsbestaetigung", "reservierung",
+  ];
+  const antiStatementHitCount = antiStatementKeywords.filter((kw) => normalized.includes(kw)).length;
+  const hasAntiStatementHint = antiStatementHitCount >= 2;
+
   const bankKeywordHit = bankKeywords.some((kw) => normalized.includes(kw));
   const bankTransactionLineCount = countTransactionLines(lines);
   const bankHasIdentifiers =
@@ -291,6 +300,7 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
 
   const bankEligible =
     !hasTaxNoticeHint &&
+    !hasAntiStatementHint &&
     (bankCriteriaCount >= 2 ||
       (bankCriteriaCount >= 1 && bankStructureScore >= 0.15) ||
       hasKontoauszugKeyword);

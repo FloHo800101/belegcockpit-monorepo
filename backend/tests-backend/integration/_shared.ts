@@ -90,8 +90,10 @@ export type Database = {
       document_analyze_runs: {
         Row: {
           id: string;
+          document_id: string | null;
           storage_path: string;
           model_id: string;
+          source: string;
           analyze_result: Json | null;
           parsed_data: Json | null;
           parse_confidence: number | null;
@@ -99,8 +101,10 @@ export type Database = {
         };
         Insert: {
           id?: string;
+          document_id?: string | null;
           storage_path: string;
           model_id: string;
+          source?: string;
           analyze_result: Json | null;
           parsed_data: Json | null;
           parse_confidence: number | null;
@@ -108,8 +112,10 @@ export type Database = {
         };
         Update: {
           id?: string;
+          document_id?: string | null;
           storage_path?: string;
           model_id?: string;
+          source?: string;
           analyze_result?: Json | null;
           parsed_data?: Json | null;
           parse_confidence?: number | null;

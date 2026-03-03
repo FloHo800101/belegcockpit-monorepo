@@ -10,6 +10,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
+import { normalizeString, coerceDate, toNumber, buildTransactionReference } from "../../supabase/functions/_shared/upsert-helpers.ts";
 
 dotenv.config({ path: ".env.live.local" });
 dotenv.config();
@@ -33,7 +34,9 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 type ParsedTransaction = {
   bookingDate?: string | null;
+  booking_date?: string | null;
   valueDate?: string | null;
+  value_date?: string | null;
   amount?: number | string | null;
   currency?: string | null;
   foreignAmount?: number | string | null;
@@ -70,6 +73,7 @@ async function main() {
     no_tenant: 0,
     invalid_date: 0,
     invalid_amount: 0,
+    fallback_date_used: 0,
   };
 
   for (const row of rows) {
@@ -86,24 +90,37 @@ async function main() {
 
     const docId = row.document_id as string;
     const docRef = (row as any).documents;
-    const tenantId = Array.isArray(docRef)
+    const docCreatedAt = Array.isArray(docRef)
+      ? (docRef[0]?.created_at as string | null)
+      : (docRef?.created_at as string | null);
+    const docFallbackDate = coerceDate(docCreatedAt);
+    let tenantId = Array.isArray(docRef)
       ? (docRef[0]?.tenant_id as string | null)
       : (docRef?.tenant_id as string | null);
+    if (!tenantId) {
+      tenantId = TENANT_ID ?? (await loadTenantId(docId));
+    }
     if (!tenantId) {
       skipReasons.no_tenant += 1;
       continue;
     }
 
     let localInvalidDate = 0;
+    let localFallbackDateUsed = 0;
     let localInvalidAmount = 0;
     const payload = transactions
       .map((tx, index) => {
-        const bookingDate = coerceDate(tx.bookingDate);
-        const valueDate = coerceDate(tx.valueDate) ?? bookingDate;
+        const bookingDateRaw = coerceDate(tx.bookingDate ?? tx.booking_date);
+        const valueDateRaw = coerceDate(tx.valueDate ?? tx.value_date);
+        const valueDate = valueDateRaw ?? bookingDateRaw ?? docFallbackDate;
         if (!valueDate) {
           localInvalidDate += 1;
           return null;
         }
+        if (!valueDateRaw && !bookingDateRaw && docFallbackDate) {
+          localFallbackDateUsed += 1;
+        }
+        const bookingDate = bookingDateRaw ?? docFallbackDate;
 
         const amount = toNumber(tx.amount);
         if (!Number.isFinite(amount)) {
@@ -118,7 +135,7 @@ async function main() {
         const foreignCurrency = normalizeString(tx.foreignCurrency);
         const exchangeRateRaw = toNumber(tx.exchangeRate);
         const exchangeRate = Number.isFinite(exchangeRateRaw) ? exchangeRateRaw : null;
-        const reference = buildReference(tx);
+        const reference = buildTransactionReference(tx);
         const counterpartyName = normalizeString(tx.counterpartyName);
         const counterpartyIban =
           normalizeString(tx.counterpartyIban) || normalizeString(parsed.iban) || null;
@@ -147,6 +164,7 @@ async function main() {
 
     skipReasons.invalid_date += localInvalidDate;
     skipReasons.invalid_amount += localInvalidAmount;
+    skipReasons.fallback_date_used += localFallbackDateUsed;
 
     if (!payload.length) {
       skipReasons.no_transactions += 1;
@@ -189,10 +207,12 @@ async function loadStatementExtractions() {
   let query = supabase
     .from("document_extractions")
     .select(
-      "document_id, parsed_data, detected_document_type, documents(tenant_id, created_at)"
+      "document_id, parsed_data, detected_document_type, parsing_path, documents!inner(tenant_id, created_at)"
     )
     .eq("status", "succeeded")
-    .eq("detected_document_type", "bank_statement");
+    .or(
+      "detected_document_type.eq.bank_statement,parsing_path.eq.azure_bank_statement,parsed_data->>documentType.eq.bank_statement"
+    );
 
   if (TENANT_ID) query = query.eq("documents.tenant_id", TENANT_ID);
   if (FROM) query = query.gte("documents.created_at", toDateTime(FROM));
@@ -212,34 +232,14 @@ function toDateTime(value: string): string {
   return date.toISOString();
 }
 
-function coerceDate(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
-}
-
-function normalizeString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-function buildReference(tx: ParsedTransaction): string | null {
-  const parts = [tx.description, tx.reference]
-    .map(normalizeString)
-    .filter((value): value is string => Boolean(value));
-  if (!parts.length) return null;
-  return parts.join("\n");
-}
-
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const normalized = value.replace(/\s/g, "").replace(",", ".");
-    const num = Number(normalized);
-    return Number.isNaN(num) ? Number.NaN : num;
-  }
-  return Number.NaN;
+async function loadTenantId(documentId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("documents")
+    .select("tenant_id")
+    .eq("id", documentId)
+    .single();
+  if (error) return null;
+  return (data?.tenant_id as string | null) ?? null;
 }
 
 function toOptionalInt(value?: string): number | null {

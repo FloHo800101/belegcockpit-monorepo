@@ -32,5 +32,8 @@ tests/output/
 .idea/
 .claude/
 
+# Claude task tracking
+tasks/
+
 # Logs
 *.log

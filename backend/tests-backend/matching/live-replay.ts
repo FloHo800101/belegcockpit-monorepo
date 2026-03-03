@@ -1,5 +1,5 @@
 // How to run:
-// SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... FROM=... TO=... [INCLUDE_UNDATED_DOCS=1] pnpm matching:live-replay
+// SUPABASE_LIVE_URL=... SUPABASE_LIVE_SERVICE_ROLE_KEY=... SUPABASE_LIVE_TENANT_ID=... FROM=... TO=... [INCLUDE_UNDATED_DOCS=1] pnpm matching:live-replay
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
@@ -34,6 +34,10 @@ const SUPABASE_SERVICE_ROLE_KEY = requireEnv(
   process.env.SUPABASE_LIVE_SERVICE_ROLE_KEY,
   "SUPABASE_LIVE_SERVICE_ROLE_KEY"
 );
+const SUPABASE_TENANT_ID = requireEnv(
+  process.env.SUPABASE_LIVE_TENANT_ID,
+  "SUPABASE_LIVE_TENANT_ID"
+);
 const FROM = requireEnv(process.env.FROM, "FROM");
 const TO = requireEnv(process.env.TO, "TO");
 const LIMIT_DOCS = toOptionalInt(process.env.LIMIT_DOCS);
@@ -65,7 +69,7 @@ type AppliedRow = {
 async function main() {
   const runId = crypto.randomUUID();
   const createdAtISO = new Date().toISOString();
-  const tenantId = await resolveTenantId();
+  const tenantId = SUPABASE_TENANT_ID;
 
   await insertRun(tenantId, runId, createdAtISO);
 
@@ -762,75 +766,6 @@ async function fetchByIds(
     if (data) out.push(...data);
   }
   return out;
-}
-
-async function resolveTenantId(): Promise<string> {
-  const docTenants = await collectTenantCounts(
-    "invoices",
-    "created_at",
-    fromISO,
-    toISO,
-    LIMIT_DOCS
-  );
-  const txTenants = await collectTenantCounts(
-    "bank_transactions",
-    "value_date",
-    fromDateOnly,
-    toDateOnlyValue,
-    LIMIT_TXS
-  );
-  const merged = mergeCounts(docTenants, txTenants);
-  const candidates = [...merged.entries()].sort((a, b) => b[1] - a[1]);
-
-  if (candidates.length === 0) {
-    throw new Error("No candidate tenants found for the given filters.");
-  }
-
-  if (candidates.length > 1) {
-    console.warn(
-      `Multiple tenants found; selecting ${candidates[0][0]} with ${candidates[0][1]} records.`
-    );
-  }
-
-  return candidates[0][0];
-}
-
-async function collectTenantCounts(
-  table: string,
-  dateColumn: string,
-  fromValue: string,
-  toValue: string,
-  limit: number | null
-): Promise<Map<string, number>> {
-  let query = supabase
-    .from(table)
-    .select("tenant_id")
-    .eq("link_state", "unlinked")
-    .gte(dateColumn, fromValue)
-    .lte(dateColumn, toValue);
-
-  if (limit) query = query.limit(limit);
-
-  const { data, error } = await query;
-  if (error) throw new Error(`Failed to resolve tenants from ${table}: ${error.message}`);
-  const counts = new Map<string, number>();
-  for (const row of data ?? []) {
-    const tenantId = row.tenant_id as string;
-    counts.set(tenantId, (counts.get(tenantId) ?? 0) + 1);
-  }
-  return counts;
-}
-
-function mergeCounts(
-  a: Map<string, number>,
-  b: Map<string, number>
-): Map<string, number> {
-  const merged = new Map<string, number>();
-  for (const [key, value] of a.entries()) merged.set(key, value);
-  for (const [key, value] of b.entries()) {
-    merged.set(key, (merged.get(key) ?? 0) + value);
-  }
-  return merged;
 }
 
 function buildText(parts: Array<string | null | undefined>): string {

@@ -22,9 +22,14 @@ import { detectDocumentType } from "../../supabase/functions/_shared/document-ty
 const RUNS_TABLE = "document_analyze_runs";
 const EXTRACTIONS_TABLE = "document_extractions";
 const DOCUMENTS_TABLE = "documents";
+let TENANT_ID: string | null = null;
+let FROM: string | null = null;
+let TO: string | null = null;
+let LIMIT_DOCS: number | null = null;
 
 type AnalyzeRun = {
   id: string;
+  document_id?: string | null;
   storage_path: string;
   model_id: string;
   analyze_result: unknown;
@@ -34,6 +39,8 @@ type AnalyzeRun = {
 type DocumentRow = {
   id: string;
   storage_path: string;
+  tenant_id: string | null;
+  created_at: string | null;
 };
 
 type AnalyzeResult = {
@@ -61,27 +68,73 @@ async function loadDocumentsByPath(
   supabase: ReturnType<typeof createSupabaseTestClient>,
   storagePaths: string[]
 ) {
-  const map = new Map<string, string>();
+  const map = new Map<string, DocumentRow>();
   for (const group of chunk(storagePaths, 200)) {
     const { data, error } = await (supabase.from(DOCUMENTS_TABLE) as any)
-      .select("id, storage_path")
+      .select("id, storage_path, tenant_id, created_at")
       .in("storage_path", group);
     if (error) {
       throw new Error(`Failed to load documents: ${error.message}`);
     }
     for (const row of (data ?? []) as DocumentRow[]) {
-      map.set(row.storage_path, row.id);
+      map.set(row.storage_path, row);
     }
   }
   return map;
 }
 
+async function loadDocumentsById(
+  supabase: ReturnType<typeof createSupabaseTestClient>,
+  documentIds: string[]
+) {
+  const map = new Map<string, DocumentRow>();
+  for (const group of chunk(documentIds, 200)) {
+    const { data, error } = await (supabase.from(DOCUMENTS_TABLE) as any)
+      .select("id, storage_path, tenant_id, created_at")
+      .in("id", group);
+    if (error) {
+      throw new Error(`Failed to load documents by id: ${error.message}`);
+    }
+    for (const row of (data ?? []) as DocumentRow[]) {
+      map.set(row.id, row);
+    }
+  }
+  return map;
+}
+
+function toDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid date: ${value}`);
+  }
+  return date.toISOString();
+}
+
+function toOptionalInt(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function matchesFilters(row: DocumentRow | null): boolean {
+  if (!row) return false;
+  if (TENANT_ID && row.tenant_id !== TENANT_ID) return false;
+  if ((FROM || TO) && !row.created_at) return false;
+  if (FROM && row.created_at && row.created_at < toDateTime(FROM)) return false;
+  if (TO && row.created_at && row.created_at > toDateTime(TO)) return false;
+  return true;
+}
+
 async function run() {
   await loadEnvFiles();
+  TENANT_ID = Deno.env.get("TENANT_ID") ?? Deno.env.get("SUPABASE_LIVE_TENANT_ID") ?? null;
+  FROM = Deno.env.get("FROM") ?? null;
+  TO = Deno.env.get("TO") ?? null;
+  LIMIT_DOCS = toOptionalInt(Deno.env.get("LIMIT_DOCS"));
   const supabase = createSupabaseTestClient();
 
   const { data: runs, error } = await (supabase.from(RUNS_TABLE) as any)
-    .select("id, storage_path, model_id, analyze_result, parse_confidence");
+    .select("id, document_id, storage_path, model_id, analyze_result, parse_confidence");
   if (error) {
     throw new Error(`Failed to load analyze runs: ${error.message}`);
   }
@@ -95,17 +148,33 @@ async function run() {
   const storagePaths = Array.from(
     new Set(runList.map((run) => run.storage_path).filter(Boolean))
   );
-  const documentMap = await loadDocumentsByPath(supabase, storagePaths);
+  const documentMapByPath = await loadDocumentsByPath(supabase, storagePaths);
+  const documentIds = Array.from(
+    new Set(runList.map((run) => run.document_id ?? null).filter(Boolean) as string[])
+  );
+  const documentMapById = await loadDocumentsById(supabase, documentIds);
 
   let updated = 0;
   let skipped = 0;
+  let considered = 0;
 
   for (const run of runList) {
-    const documentId = documentMap.get(run.storage_path);
+    const rowById = run.document_id ? documentMapById.get(run.document_id) ?? null : null;
+    const rowByPath = documentMapByPath.get(run.storage_path) ?? null;
+    const docRow = rowById ?? rowByPath;
+    const documentId = docRow?.id ?? null;
     if (!documentId) {
       skipped += 1;
       continue;
     }
+    if (!matchesFilters(docRow)) {
+      skipped += 1;
+      continue;
+    }
+    if (LIMIT_DOCS && considered >= LIMIT_DOCS) {
+      break;
+    }
+    considered += 1;
     if (!run.analyze_result) {
       skipped += 1;
       continue;
@@ -183,7 +252,7 @@ async function run() {
     updated += 1;
   }
 
-  console.log("[backfill] done", { updated, skipped, total: runList.length });
+  console.log("[backfill] done", { updated, skipped, considered, total: runList.length });
 }
 
 if (import.meta.main) {

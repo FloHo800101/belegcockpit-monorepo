@@ -142,3 +142,4 @@ tests-backend/manual/test-upload-state.json
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 tests-backend/documents-analyzes/azure-analyze/
+Manueller Test/

@@ -5,6 +5,11 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { processDocument } from "../_shared/processor.ts";
 import { buildInvoiceAmountCandidates, resolveInvoiceAmount } from "../_shared/invoice-amount-candidates.ts";
 import { buildInvoiceLineItemRows } from "../_shared/invoice-line-items.ts";
+import { normalizeString, coerceDate, toNumber, buildTransactionReference } from "../_shared/upsert-helpers.ts";
+
+const RUNS_TABLE = "document_analyze_runs";
+const LIVE_RUN_SOURCE = "live_process";
+const AZURE_MODELS = new Set(["prebuilt-invoice", "prebuilt-receipt", "prebuilt-layout"]);
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -78,6 +83,12 @@ serve(async (req) => {
     );
 
     const result = await processDocument(supabase, document);
+    await persistLiveAnalyzeRun({
+      supabase,
+      documentId,
+      storagePath: (document.storage_path ?? "").toString(),
+      result,
+    });
 
     const extractionStatus =
       result.status === "parsed"
@@ -158,6 +169,60 @@ function deriveDocumentType(
   }
   if (parsed.documentType === "bank_statement") return "BANK_STATEMENT";
   return null;
+}
+
+async function persistLiveAnalyzeRun(params: {
+  supabase: any;
+  documentId: string;
+  storagePath: string;
+  result: {
+    model_used?: string | null;
+    raw_result?: unknown;
+    parsed_data?: unknown;
+    confidence?: number | null;
+  };
+}) {
+  const { supabase, documentId, storagePath, result } = params;
+  const modelId = result.model_used ?? null;
+  if (!modelId || !AZURE_MODELS.has(modelId)) return;
+  if (result.raw_result == null) return;
+
+  const payload = {
+    document_id: documentId,
+    storage_path: storagePath,
+    model_id: modelId,
+    source: LIVE_RUN_SOURCE,
+    analyze_result: result.raw_result,
+    parsed_data: result.parsed_data ?? null,
+    parse_confidence: result.confidence ?? null,
+  };
+
+  const { data: existing, error: existingError } = await supabase
+    .from(RUNS_TABLE)
+    .select("id")
+    .eq("document_id", documentId)
+    .eq("model_id", modelId)
+    .eq("source", LIVE_RUN_SOURCE)
+    .limit(1);
+  if (existingError) {
+    throw new Error(`Failed to load analyze run: ${existingError.message}`);
+  }
+
+  if (Array.isArray(existing) && existing.length > 0) {
+    const { error: updateError } = await supabase
+      .from(RUNS_TABLE)
+      .update(payload)
+      .eq("id", existing[0].id);
+    if (updateError) {
+      throw new Error(`Failed to update analyze run: ${updateError.message}`);
+    }
+    return;
+  }
+
+  const { error: insertError } = await supabase.from(RUNS_TABLE).insert(payload);
+  if (insertError) {
+    throw new Error(`Failed to insert analyze run: ${insertError.message}`);
+  }
 }
 
 async function upsertInvoice(params: {
@@ -349,38 +414,5 @@ async function upsertBankTransactions(params: {
   }
 }
 
-function coerceDate(value: unknown): string | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString().slice(0, 10);
-}
-
-function normalizeString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
-function buildTransactionReference(tx: {
-  description?: string | null;
-  reference?: string | null;
-}): string | null {
-  const parts = [tx.description, tx.reference]
-    .map(normalizeString)
-    .filter((value): value is string => Boolean(value));
-  if (!parts.length) return null;
-  return parts.join("\n");
-}
-
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const normalized = value.replace(/\s/g, "").replace(",", ".");
-    const num = Number(normalized);
-    return Number.isNaN(num) ? Number.NaN : num;
-  }
-  return Number.NaN;
-}
 
 

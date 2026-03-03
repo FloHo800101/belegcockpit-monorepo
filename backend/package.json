@@ -12,6 +12,7 @@
     "test:pdf-embedded-xml": "deno run -A tests-backend/integration/pdf-embedded-xml-cases.ts",
     "test:azure-analyze": "deno run -A tests-backend/integration/azure-analyze-cases.ts",
     "test:azure-mappers": "deno run -A tests-backend/integration/azure-mappers-cases.ts",
+    "test:backfill-analyze-runs": "tsx tests-backend/integration/backfill-analyze-runs-from-extractions.ts",
     "test:backfill-extractions": "deno run -A tests-backend/integration/backfill-extractions-from-analyze.ts",
     "test:backfill-bank-transactions": "tsx tests-backend/integration/backfill-bank-transactions.ts",
     "test:backfill-invoices": "tsx tests-backend/integration/backfill-invoices.ts",

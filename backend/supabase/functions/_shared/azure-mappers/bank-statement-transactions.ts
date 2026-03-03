@@ -26,7 +26,7 @@ const BOOKING_TYPE_MAP: Array<[RegExp, ParsedTransaction["bookingType"]]> = [
   [/FOLGELASTSCHRIFT|ERSTLASTSCHRIFT|LASTSCHRIFT/i, "direct_debit"],
   [/ONLINE-UEBERWEISUNG|UEBERWEISUNG|DAUERAUFTRAG/i, "transfer"],
   [/GUTSCHRIFT|EINZAHLUNG/i, "transfer"],
-  [/ENTGELTABSCHLUSS|ABSCHLUSS/i, "fee"],
+  [/ENTGELTABSCHLUSS|ENTGELT|ABSCHLUSS/i, "fee"],
   [/ZINSEN|ZINSABSCHLUSS/i, "interest"],
   [/KARTENZAHLUNG|GIROCARD|GIROSAMMEL/i, "card_payment"],
 ];
@@ -318,7 +318,19 @@ export function findTransactionBlock(
       const lineAmount = parseAmount(lines[j]);
       if (lineAmount == null) continue;
       if (amountsEqual(lineAmount, amount) || amountsEqualIgnoringSign(lineAmount, amount)) {
-        return { dateIndex: i, amountIndex: j, amountMatched: true };
+        // Look for a closer date line between i+1 and j that also matches the
+        // target date.  This handles bank statements (e.g. ING) where a valuta
+        // date line from the previous transaction appears before the booking
+        // date of the current transaction — both share the same calendar date.
+        // Picking the closest date to the amount avoids consuming the previous
+        // transaction's reference block as the current transaction's description.
+        let bestDateIndex = i;
+        for (let k = i + 1; k < j; k += 1) {
+          if (lineStartsWithDate(lines[k], dateIso, referenceYear)) {
+            bestDateIndex = k;
+          }
+        }
+        return { dateIndex: bestDateIndex, amountIndex: j, amountMatched: true };
       }
     }
 
@@ -376,6 +388,8 @@ export function extractTransactionsFromItems(
     const block = findTransactionBlock(lines, cursor, dateIso, amount, referenceYear);
     const contextWindow = buildTransactionContextWindow(lines, cursor, dateIso, referenceYear);
     if (block) {
+      // Advance cursor past the amount (or date fallback) to avoid re-matching
+      // the same lines for the next item.
       cursor = (block.amountMatched ? block.amountIndex : block.dateIndex) + 1;
     }
     return { block, contextWindow, dateIso, amount, fields };
@@ -441,11 +455,6 @@ export function extractTransactionsFromItems(
       }
     }
 
-    // Fee types have no counterparty
-    if (bookingType === "fee") {
-      counterpartyName = null;
-    }
-
     const tx: ParsedTransaction = {
       bookingDate: dateIso,
       valueDate,
@@ -486,8 +495,11 @@ export function extractTransactionsFromStatementLines(
     .filter(Boolean);
 
   const dateStartPattern = /^(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\b/;
+  // No spaces in the amount character class — prevents reference lines like
+  // "15.02.2023 STEUERNR ... VZ202 3 1.955,66EUR" from matching "202 3 1.955,66"
+  // as a single amount (which produces phantom transactions with garbage values).
   const amountTailPattern =
-    /([+-]?\s?\d[\d., ]*\d(?:[.,]\d{2}))(?:\s*([A-Z]{3}))?\s*$/;
+    /([+-]?\d[\d.,]*\d(?:[.,]\d{2}))(?:\s*([A-Z]{3}))?\s*$/;
   const out: ParsedTransaction[] = [];
 
   for (let i = 0; i < lines.length; i += 1) {
@@ -563,10 +575,6 @@ export function extractTransactionsFromStatementLines(
       if (parsed.counterpartyName) {
         counterpartyName = parsed.counterpartyName;
       }
-    }
-
-    if (bookingType === "fee") {
-      counterpartyName = null;
     }
 
     const tx: ParsedTransaction = {
@@ -758,8 +766,29 @@ export function mergeBankStatementTransactions(
     });
   }
 
+  // Collect items-based date+absAmount pairs for duplicate/phantom detection.
+  // Uses absolute amounts so that opposite-sign duplicates from separate
+  // "Eingänge"/"Ausgänge" sections (e.g. Qonto) are also caught.
+  const itemsDateAbsAmounts = new Set(
+    items.map((item) => {
+      const d = normalizeDateOnly(item.tx.bookingDate) ?? "";
+      const a = Math.abs(amountValue(item.tx.amount) ?? 0);
+      return `${d}|${a}`;
+    })
+  );
+
   for (const line of lines) {
     if (usedLineIndexes.has(line.index)) continue;
+
+    // Filter duplicate/phantom lines: unmatched lines whose date + absolute
+    // amount matches an items-sourced transaction. This covers:
+    // - Phantom lines (no counterparty, ING value-date echo lines)
+    // - Same-sign duplicates (text similarity too low for merge)
+    // - Opposite-sign duplicates (Qonto Eingänge/Ausgänge sections)
+    const ld = normalizeDateOnly(line.tx.bookingDate) ?? "";
+    const la = Math.abs(amountValue(line.tx.amount) ?? 0);
+    if (itemsDateAbsAmounts.has(`${ld}|${la}`)) continue;
+
     merged.push({
       tx: line.tx,
       sourceRank: 1,
