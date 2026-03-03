@@ -9,7 +9,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import dotenv from "dotenv";
-import { buildInvoiceAmountCandidates } from "../../supabase/functions/_shared/invoice-amount-candidates";
+import { buildInvoiceAmountCandidates, resolveInvoiceAmount } from "../../supabase/functions/_shared/invoice-amount-candidates";
 import { buildInvoiceLineItemRows } from "../../supabase/functions/_shared/invoice-line-items";
 import { normalizeString, coerceDate } from "../../supabase/functions/_shared/upsert-helpers.ts";
 
@@ -190,42 +190,6 @@ async function main() {
   console.log(`Done. inserted=${inserted} skipped=${skipped}`);
 }
 
-function resolveInvoiceAmount(parsed: ParsedDocument): number | null {
-  const fromTotals = toFinitePositive(parsed.totalGross) ?? toFinitePositive(parsed.totalNet);
-  if (fromTotals != null) return fromTotals;
-
-  const lineItems = parsed.lineItems ?? [];
-  let signedSum = 0;
-  let positiveSum = 0;
-  let hasValue = false;
-  for (const item of lineItems) {
-    const value = toFiniteNumber(item?.totalPrice);
-    if (value == null) continue;
-    signedSum += value;
-    if (value > 0) positiveSum += value;
-    hasValue = true;
-  }
-  if (!hasValue) return null;
-
-  const amount = signedSum > 0 ? signedSum : positiveSum;
-  if (amount <= 0) return null;
-  return Math.round(amount * 100) / 100;
-}
-
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const normalized = Number(value.replace(/\s/g, "").replace(",", "."));
-    if (Number.isFinite(normalized)) return normalized;
-  }
-  return null;
-}
-
-function toFinitePositive(value: unknown): number | null {
-  const num = toFiniteNumber(value);
-  if (num == null || num <= 0) return null;
-  return Math.round(num * 100) / 100;
-}
 
 async function loadTenantId(documentId: string): Promise<string | null> {
   const { data, error } = await supabase

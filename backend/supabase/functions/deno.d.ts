@@ -10,7 +10,9 @@ declare const Deno: {
   writeFile: (path: string | URL, data: Uint8Array) => Promise<void>;
   readTextFile: (path: string | URL) => Promise<string>;
   makeTempFile: (options?: { prefix?: string; suffix?: string; dir?: string }) => Promise<string>;
+  mkdir: (path: string | URL, options?: { recursive?: boolean }) => Promise<void>;
   remove: (path: string | URL, options?: { recursive?: boolean }) => Promise<void>;
+  writeTextFile: (path: string | URL, data: string) => Promise<void>;
   stdin: {
     isTerminal: () => boolean;
   };
@@ -40,5 +42,6 @@ declare const Deno: {
   };
   errors: {
     NotFound: new (message?: string) => Error;
+    AlreadyExists: new (message?: string) => Error;
   };
 };

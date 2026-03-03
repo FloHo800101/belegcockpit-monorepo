@@ -151,6 +151,7 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "steuerbescheid",
     "bescheid",
     "festsetzung",
+    "zahllast",
   ];
   const payrollKeywords = [
     "entgeltabrechnung",
@@ -171,11 +172,18 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "quittung",
     "kassenbon",
     "kassenbeleg",
+    "kundenbeleg",
     "reisekosten",
     "ticket",
     "online-ticket",
     "bitte entwerten",
     "please validate",
+    "tankstelle",
+    "eur/liter",
+    "saeulen",
+    "parkhaus",
+    "parkdauer",
+    "parkgebuehr",
   ];
 
   const receiptKeywordHitCount = receiptKeywords.filter((kw) => normalized.includes(kw)).length;

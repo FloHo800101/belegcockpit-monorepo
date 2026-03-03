@@ -2,9 +2,10 @@
 // Supports multi-receipt pages (e.g. travel expense scans with multiple tickets)
 
 import { AzureParseResult, ParsedDocument, ParsedLineItem } from "../types.ts";
-import { AzureAnalyzeResult, AzureDocument, getValue, getNumber, getDate } from "./azure-field-helpers.ts";
+import { AzureAnalyzeResult, AzureDocument, getValue, getNumber, resolvePreferredDate } from "./azure-field-helpers.ts";
 import { extractCurrency, parseAmountFlexible, parseDateFlexible, normalizeOcrText, roundCurrency } from "./parse-utils.ts";
 import { extractInvoiceNumber } from "./installment-plan.ts";
+import { cleanPartyName } from "./party-extraction.ts";
 
 /**
  * Extract receipt amounts and context from OCR text.
@@ -107,7 +108,7 @@ function extractLatestDateFromOcr(content: string): string | null {
 function mostFrequentVendor(docs: AzureDocument[]): string | null {
   const counts = new Map<string, number>();
   for (const doc of docs) {
-    const name = getValue(doc.fields?.MerchantName);
+    const name = cleanPartyName(getValue(doc.fields?.MerchantName));
     if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
   }
   let best: string | null = null;
@@ -147,7 +148,7 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
       const docTotal = getNumber(fields.Total) ?? 0;
       const docVat = getNumber(fields.TotalTax) ?? 0;
       const docNet = getNumber(fields.Subtotal) ?? 0;
-      const docDate = getDate(fields.TransactionDate);
+      const docDate = resolvePreferredDate(fields.TransactionDate);
       const docVendor = getValue(fields.MerchantName) ?? "Unknown";
 
       totalGross += docTotal;
@@ -213,8 +214,8 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
       sourceType: "receipt",
       documentType: "receipt",
       invoiceNumber: extractInvoiceNumber(contentText) ?? undefined,
-      invoiceDate: getDate(fields.TransactionDate) ?? extractLatestDateFromOcr(contentText) ?? undefined,
-      vendorName: getValue(fields.MerchantName),
+      invoiceDate: resolvePreferredDate(fields.TransactionDate) ?? extractLatestDateFromOcr(contentText) ?? undefined,
+      vendorName: cleanPartyName(getValue(fields.MerchantName)),
       totalNet: null,
       totalVat: getNumber(fields.TotalTax),
       totalGross: ocrExtraction.total,
@@ -252,12 +253,17 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
     receiptTotalNet = temp;
   }
 
+  // Fallback: calculate totalNet from totalGross - totalVat when Azure doesn't provide Subtotal
+  if (receiptTotalNet == null && receiptTotalGross != null && receiptTotalVat != null) {
+    receiptTotalNet = roundCurrency(receiptTotalGross - receiptTotalVat);
+  }
+
   const parsed: ParsedDocument = {
     sourceType: "receipt",
     documentType: "receipt",
     invoiceNumber: extractInvoiceNumber(contentText) ?? undefined,
-    invoiceDate: getDate(fields.TransactionDate) ?? extractLatestDateFromOcr(contentText) ?? undefined,
-    vendorName: getValue(fields.MerchantName),
+    invoiceDate: resolvePreferredDate(fields.TransactionDate) ?? extractLatestDateFromOcr(contentText) ?? undefined,
+    vendorName: cleanPartyName(getValue(fields.MerchantName)),
     totalNet: receiptTotalNet,
     totalVat: receiptTotalVat,
     totalGross: receiptTotalGross,

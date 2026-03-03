@@ -78,7 +78,7 @@ export function extractInvoiceNumber(content: string | null | undefined): string
 
   for (const label of labels) {
     const escapedLabel = escapeRegex(label).replace(/\s+/g, "\\s+");
-    const regex = new RegExp(`${escapedLabel}\\s*[:#\\-]?\\s*([^\\r\\n]+)`, "i");
+    const regex = new RegExp(`${escapedLabel}\\.?\\s*[:#\\-]?\\s*([^\\r\\n]+)`, "i");
     const match = normalizedContent.match(regex);
     const candidate = normalizeInvoiceNumberCandidate(match?.[1] ?? null);
     if (candidate) return candidate;
