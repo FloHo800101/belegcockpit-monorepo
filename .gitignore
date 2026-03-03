@@ -37,3 +37,5 @@ tasks/
 
 # Logs
 *.log
+backend/Manueller Test/reparse-girokonto.mjs
+
