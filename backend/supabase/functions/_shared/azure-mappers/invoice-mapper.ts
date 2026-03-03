@@ -6,6 +6,7 @@ import {
   parsePercent,
   parseGermanDateText,
   extractCurrency,
+  roundCurrency,
 } from "./parse-utils.ts";
 import {
   AzureAnalyzeResult,
@@ -86,7 +87,6 @@ export function mapAzureInvoiceToParseResult(azureResult: unknown): AzureParseRe
     extractNameFromRecipientField(aliasFields.SellerAddressRecipient),
     extractNameFromRecipientField(aliasFields.SupplierAddressRecipient),
     extractLabeledParty(contentText, VENDOR_LABELS),
-    getValue(fields.CustomerName),
   ];
 
   let buyerName = pickPrimaryParty(buyerCandidates);
@@ -135,6 +135,13 @@ export function mapAzureInvoiceToParseResult(azureResult: unknown): AzureParseRe
     totalNetFromFields == null && totalGrossFromFields == null
       ? extractRecurringContractAmount(contentText)
       : null;
+  const totalTax = getNumber(fields.TotalTax);
+
+  // Fallback: calculate totalNet from totalGross - totalVat when Azure doesn't provide SubTotal
+  const totalNetFallback =
+    totalNetFromFields == null && totalGrossFromFields != null && totalTax != null
+      ? roundCurrency(totalGrossFromFields - totalTax)
+      : null;
 
   const parsed: ParsedDocument = {
     sourceType: "invoice",
@@ -152,8 +159,8 @@ export function mapAzureInvoiceToParseResult(azureResult: unknown): AzureParseRe
     buyerAddress,
     customerId: getValue(fields.CustomerId),
     vendorTaxId: getValue(fields.VendorTaxId),
-    totalNet: totalNetFromFields ?? recurringContractAmountFallback,
-    totalVat: getNumber(fields.TotalTax),
+    totalNet: totalNetFromFields ?? totalNetFallback ?? recurringContractAmountFallback,
+    totalVat: totalTax,
     totalGross: totalGrossFromFields ?? recurringContractAmountFallback,
     currency:
       extractCurrency(contentText) ||

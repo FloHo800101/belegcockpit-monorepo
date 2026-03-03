@@ -75,15 +75,8 @@ export function extractDateFromField(field?: AzureField | null): string | null {
 export function resolvePreferredDate(field?: AzureField | null): string | null {
   const textDate = parseDateFlexible(field?.valueString || field?.content || null);
   if (!field?.valueDate) return textDate;
-
   if (!textDate) return field.valueDate;
-
-  const valueDate = parseDateFlexible(field.valueDate) ?? field.valueDate;
-  const valueMs = Date.parse(valueDate);
-  const textMs = Date.parse(textDate);
-  const bothValid = Number.isFinite(valueMs) && Number.isFinite(textMs);
-  const differsStrongly = bothValid ? Math.abs(valueMs - textMs) > 31 * 86400000 : false;
-
-  if (differsStrongly) return textDate;
-  return field.valueDate;
+  // Always prefer our DD.MM.YYYY parsing over Azure's valueDate,
+  // which sometimes swaps day and month for German dates
+  return textDate;
 }

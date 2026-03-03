@@ -97,9 +97,10 @@ export function resolveInvoiceAmount(parsed: ResolveAmountInput | null | undefin
   }
   if (!hasValue) return null;
 
-  const amount = signedSum > 0 ? signedSum : positiveSum;
+  const roundedSigned = roundCurrency(signedSum);
+  const amount = roundedSigned > 0 ? roundedSigned : roundCurrency(positiveSum);
   if (amount <= 0) return null;
-  return roundCurrency(amount);
+  return amount;
 }
 
 function toFiniteNumber(value: unknown): number | null {

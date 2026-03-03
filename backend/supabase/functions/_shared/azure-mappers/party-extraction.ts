@@ -13,6 +13,8 @@ export const BUYER_LABELS = [
   "Rechnungsempfaenger",
   "Leistungsempfänger",
   "Leistungsempfaenger",
+  "Gastname",
+  "Gast",
   "Kunde",
   "Customer",
   "Bill To",
@@ -104,12 +106,13 @@ export function cleanPartyName(value: string | null | undefined): string | null 
   let candidate = firstLine
     .replace(/^[\s:;,\-]+/, "")
     .replace(
-      /^(rechnungsempf[aä]nger|rechnungsempfaenger|rechnungssteller|kunde|customer|bill\s*to|invoice\s*to|vendor|seller|supplier|empf[aä]nger)\s*[:\-]?\s*/i,
+      /^(rechnungsempf[aä]nger|rechnungsempfaenger|rechnungssteller|kunde|customer|bill\s*to|invoice\s*to|vendor|seller|supplier|empf[aä]nger|gastname|gast)\s*[:\-]?\s*/i,
       ""
     )
+    .replace(/^(Herrn|Herr|Frau|Mr\.?|Mrs\.?|Ms\.?)(?:\s+|$)/i, "")
     .replace(/\b(?:RE|RG|INV)[-_ ]?\d{2,}[A-Z0-9/_-]*\b.*$/i, "")
     .trim();
-  candidate = candidate.replace(/\s+/g, " ");
+  candidate = candidate.replace(/\s+/g, " ").replace(/[,;:]+$/, "");
   if (!candidate) return null;
   if (/^(?:nr|nnr|kundennr|rechnungsnr)\b/i.test(candidate)) return null;
   if (!/[A-Za-zÄÖÜäöü]/.test(candidate)) return null;

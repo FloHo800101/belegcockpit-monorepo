@@ -73,8 +73,24 @@ Run all commands below from `backend/`.
 - `tests-backend/integration/invoice-amount-resolve.test.ts`
   Deno unit tests for `resolveInvoiceAmount`: totalGross/totalNet priority,
   signed line item summing, discount handling, hotel invoice with payment
-  (negative line item), and Math.abs regression guard.
+  (negative line item), Math.abs regression guard, and floating-point rounding
+  (signedSum near-zero due to IEEE 754 is rounded before comparison).
   Run with: `deno test tests-backend/integration/invoice-amount-resolve.test.ts --no-lock`
+
+- `tests-backend/integration/azure-invoice-hotel.test.ts`
+  Deno unit tests for hotel invoice extraction (Mercure case) and vendor-name safety:
+  - `extractInvoiceNumber` with "Rechnungsnr." period-separated format
+  - `extractLabeledParty` via "Gastname" buyer label
+  - `cleanPartyName` salutation stripping (Herrn/Herr/Frau)
+  - Full mapper end-to-end: vendorName, invoiceNumber, buyerName, lineItems, amount
+  - **CustomerName-as-vendor guard**: Ensures vendorName is NOT set to the buyer name
+    when Azure provides only CustomerName and no vendor fields (Apple iCloud case).
+  - **resolvePreferredDate**: Verifies DD.MM.YYYY text is preferred over Azure's swapped
+    valueDate (e.g. 05.06.2025 content vs 2025-06-05 valueDate), fallback to valueDate
+    when no content exists, and named month parsing ("29. Mai 2025").
+  - **totalNet fallback**: Verifies `totalGross - totalVat` calculation when Azure
+    doesn't provide SubTotal.
+  Run with: `deno test tests-backend/integration/azure-invoice-hotel.test.ts --no-lock`
 
 - `tests-backend/integration/azure-bank-statement-fx.test.ts`
   Deno unit tests for foreign currency detection and counterparty extraction in bank statement mapper.
@@ -90,8 +106,23 @@ Run all commands below from `backend/`.
 - `tests-backend/integration/azure-receipt-multi.test.ts`
   Deno unit tests for receipt mapper: multi-receipt pages, OCR fallback, currency fix, date fallback,
   DB Online-Ticket detection (specific bank keywords), amount-reversal sanity check (Total < Subtotal swap),
-  and document type detection for receipt keywords.
+  document type detection for receipt keywords (incl. Tankbelege, Parktickets), and Umsatzsteuer email detection.
   Run with: `deno test tests-backend/integration/azure-receipt-multi.test.ts --no-lock`
+
+- `tests-backend/integration/review-extraction.ts`
+  Review script: Downloads PDF from Supabase Storage + exports `raw_result` and `parsed_data`
+  as JSON files into `tests-backend/output/` for manual or Claude Code review.
+  Supports `DOC_ID`, `TENANT_ID`, `LIMIT_DOCS` filters; `CLEANUP=1` to clear output dir first.
+  Run with: `deno run -A tests-backend/integration/review-extraction.ts`
+
+- `tests-backend/integration/review-extraction-auto.ts`
+  Automated plausibility check on `parsed_data` — flags known error patterns (salutation as buyerName,
+  trailing punctuation in vendorName, totalNet > totalGross, vatRate > 1, missing fields, etc.)
+  without reading PDFs or raw_result. Use as pre-filter before visual review.
+  Run with: `deno run -A tests-backend/integration/review-extraction-auto.ts`
+
+- `tests-backend/REVIEW_PROMPT.md`
+  Copy-paste prompt template for running the full review workflow (auto-check + subagent visual review).
 
 ## Azure Mapper Architecture
 
@@ -99,6 +130,7 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
 
 - **`azure-mappers.ts`** — Facade, re-exports the 4 mapper functions.
 - **`invoice-mapper.ts`** — Handles invoices (prebuilt-invoice model).
+  Includes totalNet fallback: calculates `totalGross - totalVat` when Azure doesn't provide `SubTotal`.
 - **`receipt-mapper.ts`** — Handles receipts (prebuilt-receipt model). Supports multi-receipt pages
   (e.g. travel expense scans with multiple tickets on one page):
   1. Multi-document: Iterates over all `documents[]` when Azure detects multiple receipts.
@@ -107,6 +139,9 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   3. Currency fix: Prefers OCR-based currency detection (`€` → EUR) over Azure field values.
   4. Date fallback: When Azure has no `TransactionDate`, extracts the latest date from OCR text
      (e.g. `DD.MM.YYYY` patterns) as `invoiceDate`. Applied in all three code paths.
+  5. Date fix: Uses `resolvePreferredDate()` instead of `getDate()` for `TransactionDate` to
+     prevent Azure's DD.MM→MM.DD swap on German dates.
+  6. totalNet fallback: Calculates `totalGross - totalVat` when Azure doesn't provide `Subtotal`.
 - **`bank-statement-mapper.ts`** — Handles bank statements. Orchestrates three extraction paths:
   1. `extractTransactionsFromItems` — From Azure-extracted structured items.
   2. `extractTransactionsFromStatementLines` — From OCR line patterns.
@@ -147,10 +182,15 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
     trailing-alpha rejection (prevents e.g. "DE70...DATUM" corruption).
   - `extractIbanFromLine()` — Per-line IBAN extraction for counterparty IBANs.
 - **`azure-field-helpers.ts`** — Type definitions and field accessors for Azure response format.
+  - `resolvePreferredDate()` — Always prefers DD.MM.YYYY text parsing over Azure's `valueDate`,
+    which often swaps day and month for German dates (e.g. 05.06.2025 → 2025-06-05 instead of 2025-05-06).
 - **`party-extraction.ts`** — Vendor/buyer name extraction from OCR text.
+  - `BUYER_LABELS` includes hotel-specific labels ("Gastname", "Gast") for guest name extraction.
   - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
     values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, and invoice numbers.
+    Strips salutation prefixes (Herrn, Herr, Frau, Mr., Mrs., Ms.) from person names.
 - **`installment-plan.ts`** — Tax installment plan and invoice number extraction.
+  - `extractInvoiceNumber()` handles period-abbreviated labels ("Rechnungsnr." with optional `.`).
 - **`upsert-helpers.ts`** — Shared utility functions used by both the Edge Function
   (`process-document`) and Node.js backfill scripts:
   - `normalizeString()` — Trims whitespace, returns null for empty/non-string values.
@@ -175,8 +215,12 @@ instead of the generic `buchung` to avoid false positives on train tickets ("Die
 Online-Tickets").
 
 Receipt detection uses keywords: `einzelkarte`, `fahrkarte`, `fahrschein`, `quittung`,
-`kassenbon`, `kassenbeleg`, `reisekosten`, `ticket`, `bitte entwerten`, `please validate`.
+`kassenbon`, `kassenbeleg`, `kundenbeleg`, `reisekosten`, `ticket`, `online-ticket`,
+`bitte entwerten`, `please validate`, `tankstelle`, `eur/liter`, `saeulen`, `parkhaus`,
+`parkdauer`, `parkgebuehr`.
 Requires >= 2 keyword hits for `receipt` classification.
+
+Tax notice detection includes keyword `zahllast` (for Umsatzsteuer emails).
 
 ## Data flow
 

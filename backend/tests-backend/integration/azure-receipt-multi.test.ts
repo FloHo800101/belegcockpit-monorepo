@@ -482,6 +482,80 @@ if ("Deno" in globalThis) {
       );
     }
   });
+  // ---------- detection: Tankbelege → receipt ----------
+
+  Deno.test("detection: Tankbeleg with 'Tankstelle' + 'Liter' returns receipt", () => {
+    const text = [
+      "Aral Tankstelle Melek Toksoy",
+      "Berliner Straße 170 45144 Essen",
+      "32,05 Liter SÄULENNUMMER 2",
+      "SUPER BLEIFREI A 56,38 EUR",
+      "1,759 EUR/Liter",
+      "KUNDENBELEG",
+      "Datum/Uhrzeit 02.05.2025 10:13:28",
+    ].join("\n");
+    const result = detectDocumentType({ text });
+    if (result.documentType !== "receipt") {
+      throw new Error(
+        `Expected "receipt", got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
+      );
+    }
+  });
+
+  Deno.test("detection: HEM Tankbeleg with 'Tankstelle' + 'Säulennummer' returns receipt", () => {
+    const text = [
+      "HEM Tankstelle Furkan Yilmaz",
+      "Bundesstraße 32 25495 Kummerfeld",
+      "25,00 Liter SÄULENNUMMER 2",
+      "Super A 40,98 EUR",
+      "1,639 EUR/Liter",
+      "KUNDEN BELEG",
+    ].join("\n");
+    const result = detectDocumentType({ text });
+    if (result.documentType !== "receipt") {
+      throw new Error(
+        `Expected "receipt", got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
+      );
+    }
+  });
+
+  // ---------- detection: Parktickets → receipt ----------
+
+  Deno.test("detection: Parkticket with 'Parkhaus' + 'Parkdauer' returns receipt", () => {
+    const text = [
+      "Parkhaus Mitte",
+      "Hamburg Messe und Congress GmbH",
+      "BelegNr 36845/0614/614",
+      "07.05.25 16:53",
+      "Parkdauer: 0 Tage, 07:14.",
+      "Gesamtbetrag 16,00 EUR",
+      "MWSt. 19,00 % 2,55 EUR",
+    ].join("\n");
+    const result = detectDocumentType({ text });
+    if (result.documentType !== "receipt") {
+      throw new Error(
+        `Expected "receipt", got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
+      );
+    }
+  });
+
+  // ---------- detection: Umsatzsteuer-Mail → invoice ----------
+
+  Deno.test("detection: Umsatzsteuer email with 'Zahllast' returns invoice", () => {
+    const text = [
+      "digitalwirt GmbH-Mail - Umsatzsteuer 1 VJ 2025",
+      "Gmail",
+      "Guten Morgen mein Lieber,",
+      "für die Umsatzsteuer 1 VJ 2025 ergibt sich eine Zahllast iHv. 2.973,21€.",
+    ].join("\n");
+    const result = detectDocumentType({ text });
+    if (result.documentType !== "invoice") {
+      throw new Error(
+        `Expected "invoice", got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
+      );
+    }
+  });
+
 } else {
   const { describe, it, expect } = await import("vitest");
 
