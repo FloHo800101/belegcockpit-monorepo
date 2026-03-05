@@ -1,3 +1,72 @@
+## Session – 2026-03-05 (12)
+
+**Beteiligte Agenten:** Explore (40x parallel, 5 pro Batch, je 4 Dokumente visuell pruefen)
+
+### Erledigte Aufgaben
+- **Extraction-Review fuer Tenant a6a3fd7d** (159 Dokumente, alle Typen)
+- Auto-Check: 21 geflaggt (1 Error, 32 Warnings)
+- Visuelle Pruefung: 73 OK (46%), 86 BUGs (54%) — davon 59 Azure, 27 Mapper, 1 gemischt
+- Ergebnis-Datei: `backend/tests-backend/output/review-results.md`
+
+#### Fix A: lineItems totalPrice Dezimalkorrektur (Mapper)
+- `invoice-mapper.ts`: Wenn `quantity * unitPrice` um Faktor >100 von `totalPrice` abweicht, wird der berechnete Wert genommen
+- Ursache: Azure OCR liest "7.560.,00 €" als 7.56 statt 7560 — wir korrigieren mapper-seitig
+
+#### Fix B: vatItems Sanity-Filter (Mapper)
+- `invoice-mapper.ts`: vatItems mit `amount > totalGross` werden gefiltert (Azure OCR Dezimalfehler, z.B. "3.127" → 3127)
+- vatItems mit `netAmount < 0` werden gefiltert (Deposit Transfers falsch als vatItem)
+- Behebt: 2311_Bewirtungsbeleg (totalNet -3072.2), 2305_Hotel2905Wien (netAmount -291.64)
+
+#### Fix C: buyerName Country/Legal-Form Filter (Mapper)
+- `party-extraction.ts` `cleanPartyName()`: Lehnt Laendernamen ab ("DEUTSCHLAND", "Oesterreich", etc.)
+- Lehnt reine Rechtsform-Strings ab ("GmbH & Co. KG" ohne echten Firmennamen)
+- Behebt: Hotel buyerName "DEUTSCHLAND", Audi/PKW buyerName "GmbH & Co. KG"
+
+#### Fix F: totalNet Sanity-Check (Mapper)
+- `invoice-mapper.ts`: Wenn totalNet < 0 aber totalGross > 0, wird aus vatItems oder als Fallback totalGross verwendet
+- Behebt: 2304_Autow_sche (totalNet -15)
+
+#### Review-Ergebnis Zusammenfassung (159 Dokumente)
+
+| Kategorie | Anzahl | Ursache |
+|-----------|--------|---------|
+| OK | 73 | - |
+| BUG (Azure OCR) | 59 | Nicht fixbar |
+| BUG (Mapper) — gefixt | ~15 | Fix A/B/C/F |
+| BUG (Mapper) — unfixbar | ~12 | Azure-Daten zu schlecht |
+
+#### Tests
+- 6 neue Tests: lineItem totalPrice Dezimalkorrektur, vatItem amount>gross Filter, vatItem negative netAmount Filter, cleanPartyName DEUTSCHLAND, cleanPartyName "GmbH & Co. KG", negative totalNet Korrektur
+- 84/84 Tests bestanden (78 alte + 6 neue)
+
+### Geaenderte Dateien
+- `backend/supabase/functions/_shared/azure-mappers/invoice-mapper.ts` – lineItem totalPrice Korrektur, vatItem Sanity-Filter, negative totalNet Guard
+- `backend/supabase/functions/_shared/azure-mappers/party-extraction.ts` – cleanPartyName: Country + Legal-Form Rejection
+- `backend/tests-backend/integration/azure-invoice-vendor-name.test.ts` – 6 neue Tests
+- `backend/tests-backend/README.md` – Doku-Updates
+- `backend/tests-backend/output/review-results.md` – Vollstaendiger Review-Bericht (159 Dokumente)
+
+### Entscheidungen & Begruendungen
+- lineItem totalPrice: Faktor >100 als Schwelle (konservativ genug, nur echte Dezimalfehler)
+- vatItem amount > totalGross: Sicherer Filter — ein einzelnes vatItem kann nie mehr Steuer als Bruttobetrag haben
+- Country-Name Liste: Nur DE/AT/CH + englische Varianten, erweiterbar bei Bedarf
+- Legal-Form-Only: Entfernt alle bekannten Suffixe, prueft ob Rest leer ist
+
+### Learnings
+- Azure OCR hat systematische Probleme mit deutschen Tausendertrennern ("7.560.,00 €" → 7.56)
+- Azure TaxDetails.Amount kann um Faktor 1000 daneben liegen wenn "3.127" als 3127 gelesen wird
+- Hotel-Rechnungen haben oft Deposit-Zeilen die als negative vatItem-netAmounts erscheinen
+- buyerName "DEUTSCHLAND" kommt bei oesterreichischen Hotels vor (Azure nimmt Country-Feld)
+- Bei 159 Dokumenten ist Context-Management kritisch: Ergebnis-Datei + Batches + Subagenten
+
+### Offene Punkte / Naechste Schritte
+- [ ] Re-Parse fuer Tenant a6a3fd7d: `TENANT_ID=a6a3fd7d-b12d-4887-b28f-7d816766c237 FORCE_REPARSE=1 pnpm test:azure-mappers`
+- [ ] Backfill-Extractions + Backfill-Invoices fuer den Tenant
+- [ ] Edge Function redeployen
+- [ ] `tests-backend/output/` leeren nach Review-Abschluss
+
+---
+
 ## Session – 2026-03-05 (11)
 
 **Beteiligte Agenten:** Explore (5x parallel, je 1 Dokument visuell pruefen)

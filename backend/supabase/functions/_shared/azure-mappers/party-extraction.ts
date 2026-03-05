@@ -125,6 +125,14 @@ export function cleanPartyName(value: string | null | undefined): string | null 
     if (!/[A-Za-zÄÖÜäöü]/.test(candidate)) continue;
     // Single characters are never valid party names (e.g. logo letters like "N")
     if (candidate.length < 2) continue;
+    // Fix C: Reject country names used as party names (e.g. buyerName "DEUTSCHLAND")
+    if (/^(deutschland|germany|österreich|austria|schweiz|switzerland)$/i.test(candidate)) continue;
+    // Fix C: Reject if candidate is ONLY a legal form (e.g. "GmbH & Co. KG")
+    const withoutLegalForm = candidate
+      .replace(/\b(gmbh|mbh|ag|kg|ug|ohg|gbr|ek|e\.k\.|ltd|llc|inc|sarl|sa|b\.v\.|bv|co\.?)\b/gi, "")
+      .replace(/[&.,\-\s]+/g, "")
+      .trim();
+    if (!withoutLegalForm) continue;
     return candidate;
   }
   return null;
