@@ -100,13 +100,19 @@ Run all commands below from `backend/`.
 - `tests-backend/integration/azure-invoice-vendor-name.test.ts`
   Deno unit tests for vendor name extraction edge cases in invoice mapper.
   Covers single-char logo rejection (e.g. Notion "N"), short multi-char names (e.g. "DB"),
-  and fallback through candidate list.
+  fallback through candidate list, business-suffix preference over short logo names
+  (e.g. "X XING" → "New Work SE"), tax-free invoice totalNet/totalVat fallback,
+  multi-line anrede buyerName extraction (e.g. "Herr\nFlorian Hoffmann"),
+  and Metro receipt extraction (RECHNUNGS-NR. hyphenated label + buyerName before KUNDE).
   Run with: `deno test tests-backend/integration/azure-invoice-vendor-name.test.ts --no-lock`
 
 - `tests-backend/integration/azure-receipt-multi.test.ts`
   Deno unit tests for receipt mapper: multi-receipt pages, OCR fallback, currency fix, date fallback,
   DB Online-Ticket detection (specific bank keywords), amount-reversal sanity check (Total < Subtotal swap),
-  document type detection for receipt keywords (incl. Tankbelege, Parktickets), and Umsatzsteuer email detection.
+  parking ticket total-line dedup (skip "Gesamt brutto"/"Betrag" summary lines in OCR extraction),
+  document type detection for receipt keywords (incl. Tankbelege, Parktickets), Umsatzsteuer email detection,
+  default-to-invoice fallback (no more `unknown`), "KUNDEN BELEG" (with space) detection,
+  and OCR-fallback-path totalNet calculation.
   Run with: `deno test tests-backend/integration/azure-receipt-multi.test.ts --no-lock`
 
 - `tests-backend/integration/review-extraction.ts`
@@ -131,6 +137,9 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
 - **`azure-mappers.ts`** — Facade, re-exports the 4 mapper functions.
 - **`invoice-mapper.ts`** — Handles invoices (prebuilt-invoice model).
   Includes totalNet fallback: calculates `totalGross - totalVat` when Azure doesn't provide `SubTotal`.
+  Also derives totalVat from vatItems sum when Azure doesn't provide `TotalTax` but has `TaxDetails`.
+  Tax-free fallback: sets `totalNet = totalGross` and `totalVat = 0` when neither Azure TotalTax
+  nor vatItems provide tax amounts (e.g. Führungszeugnis with 0% tax).
 - **`receipt-mapper.ts`** — Handles receipts (prebuilt-receipt model). Supports multi-receipt pages
   (e.g. travel expense scans with multiple tickets on one page):
   1. Multi-document: Iterates over all `documents[]` when Azure detects multiple receipts.
@@ -142,6 +151,9 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   5. Date fix: Uses `resolvePreferredDate()` instead of `getDate()` for `TransactionDate` to
      prevent Azure's DD.MM→MM.DD swap on German dates.
   6. totalNet fallback: Calculates `totalGross - totalVat` when Azure doesn't provide `Subtotal`.
+     Applied in all three code paths (multi-doc, OCR-fallback, single-receipt).
+  7. Total-line dedup: OCR extraction skips summary lines (`Gesamt brutto`, `Betrag`, `Summe`, `Total`,
+     `Endbetrag`) to prevent double-counting the same amount.
 - **`bank-statement-mapper.ts`** — Handles bank statements. Orchestrates three extraction paths:
   1. `extractTransactionsFromItems` — From Azure-extracted structured items.
   2. `extractTransactionsFromStatementLines` — From OCR line patterns.
@@ -178,6 +190,8 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
     Eingänge/Ausgänge sections).
 - **`bank-statement-fx.ts`** — Foreign currency detection and exchange rate extraction.
 - **`parse-utils.ts`** — Shared parsing (dates, amounts, IBAN, BIC, currency, text normalization).
+  - `parsePercent()` — Handles both dot-decimal ("19.00 %") and German comma-decimal ("19,00 %")
+    formats. Distinguishes dot-as-decimal from dot-as-thousand-separator.
   - `extractIban()` — Two-stage IBAN extraction with length validation (15-34 chars) and
     trailing-alpha rejection (prevents e.g. "DE70...DATUM" corruption).
   - `extractIbanFromLine()` — Per-line IBAN extraction for counterparty IBANs.
@@ -189,8 +203,19 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
     values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, and invoice numbers.
     Strips salutation prefixes (Herrn, Herr, Frau, Mr., Mrs., Ms.) from person names.
+    Iterates through all lines of multi-line values (e.g. "Herr\nFlorian Hoffmann") instead of
+    only using the first line.
+  - `looksLikeCompanyLine()` — Rejects strings with high digit-to-letter ratio (e.g. "M22076230495")
+    to prevent invoice/customer numbers from being mistaken as company names.
+  - `pickPrimaryParty()` — Prefers candidates with business suffixes (GmbH, SE, AG, etc.) over
+    short brand/logo names (≤8 chars without suffix), e.g. "X XING" → "New Work SE".
+  - `extractLabeledParty()` — Fallback: when a buyer label (e.g. "KUNDE:") has an invalid value
+    (only numbers/IDs), checks the preceding line for a valid person/party name.
 - **`installment-plan.ts`** — Tax installment plan and invoice number extraction.
-  - `extractInvoiceNumber()` handles period-abbreviated labels ("Rechnungsnr." with optional `.`).
+  - `extractInvoiceNumber()` handles period-abbreviated labels ("Rechnungsnr." with optional `.`),
+    hyphenated variants ("Rechnungs-Nr.", "Beleg-Nr.", "Bon-Nr.").
+  - `normalizeInvoiceNumberCandidate()` rejects known label words (RECHNUNGSDATUM, DATUM, SEITE,
+    ZIMMER, etc.) that OCR may capture as invoice number values.
 - **`upsert-helpers.ts`** — Shared utility functions used by both the Edge Function
   (`process-document`) and Node.js backfill scripts:
   - `normalizeString()` — Trims whitespace, returns null for empty/non-string values.
@@ -200,7 +225,7 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
 
 ### Document type detection (`document-type-detection.ts`)
 
-Classifies documents into `invoice`, `bank_statement`, `receipt`, or `unknown` using:
+Classifies documents into `invoice`, `bank_statement`, or `receipt` using:
 - Keyword matching (bank, invoice, tax notice, payroll, receipt)
 - Structural patterns (transaction lines, balances, invoice numbers)
 - Azure field presence (InvoiceId, TaxDetails, etc.)
@@ -217,8 +242,12 @@ Online-Tickets").
 Receipt detection uses keywords: `einzelkarte`, `fahrkarte`, `fahrschein`, `quittung`,
 `kassenbon`, `kassenbeleg`, `kundenbeleg`, `reisekosten`, `ticket`, `online-ticket`,
 `bitte entwerten`, `please validate`, `tankstelle`, `eur/liter`, `saeulen`, `parkhaus`,
-`parkdauer`, `parkgebuehr`.
+`parkschein`, `parkzeit`, `parkdauer`, `parkgebuehr`, `kunden beleg`, `quittungsnummer`.
 Requires >= 2 keyword hits for `receipt` classification.
+
+**Default fallback:** When no type can be determined, documents default to `invoice`
+(not `unknown`). Every uploaded document is either an invoice or receipt, making
+`invoice` the safer fallback.
 
 Tax notice detection includes keyword `zahllast` (for Umsatzsteuer emails).
 

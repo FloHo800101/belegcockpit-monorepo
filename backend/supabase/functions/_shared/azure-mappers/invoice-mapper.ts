@@ -223,6 +223,25 @@ export function mapAzureInvoiceToParseResult(azureResult: unknown): AzureParseRe
     })
     .filter(Boolean) as ParsedDocument["vatItems"];
 
+  // Fallback: derive totalVat from vatItems sum when Azure doesn't provide TotalTax
+  if (parsed.totalVat == null && (parsed.vatItems?.length ?? 0) > 0) {
+    const vatSum = roundCurrency(
+      parsed.vatItems!.reduce((sum, item) => sum + (item?.amount ?? 0), 0)
+    );
+    if (vatSum > 0) {
+      parsed.totalVat = vatSum;
+      if (parsed.totalNet == null && parsed.totalGross != null) {
+        parsed.totalNet = roundCurrency(parsed.totalGross - vatSum);
+      }
+    }
+  }
+
+  // Fallback: tax-free documents where totalVat is still null and no vatItems contributed
+  if (parsed.totalVat == null && parsed.totalGross != null && parsed.totalNet == null) {
+    parsed.totalVat = 0;
+    parsed.totalNet = parsed.totalGross;
+  }
+
   if ((parsed.vatItems?.length ?? 0) === 1) {
     const fallbackRate = parsed.vatItems?.[0]?.rate ?? null;
     if (fallbackRate != null) {

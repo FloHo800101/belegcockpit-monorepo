@@ -182,8 +182,12 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "eur/liter",
     "saeulen",
     "parkhaus",
+    "parkschein",
+    "parkzeit",
     "parkdauer",
     "parkgebuehr",
+    "kunden beleg",
+    "quittungsnummer",
   ];
 
   const receiptKeywordHitCount = receiptKeywords.filter((kw) => normalized.includes(kw)).length;
@@ -393,7 +397,9 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     reasons.push("keyword:invoice");
   }
 
-  return { documentType: "unknown", confidence: 0, reasons };
+  // Default to invoice rather than unknown — every uploaded document is
+  // either a receipt or an invoice, and invoice is the safer fallback.
+  return { documentType: "invoice", confidence: 0.1, reasons: [...reasons, "fallback:default_invoice"] };
 }
 
 export function detectStatementPeriod(text: string) {

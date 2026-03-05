@@ -539,6 +539,54 @@ if ("Deno" in globalThis) {
     }
   });
 
+  // ---------- Parkticket: "Gesamt brutto" total line not double-counted ----------
+
+  Deno.test("receipt mapper: parking ticket with 'Gesamt brutto' does not double-count total", () => {
+    // Simulates a parking receipt where €100 appears twice in OCR:
+    // once as the charge line and once as "Gesamt brutto €100,00"
+    const ocrContent = [
+      "Spandauer Straße 3",
+      "D-10178 Berlin",
+      "KA 17 12.10.22 11:49",
+      "Rechnung 070628",
+      "Kurzparkticket",
+      "TGDom - Nr. 056636",
+      "08.10.22 12:48",
+      "12.10.22 11:49",
+      "Dauer 3d23h2'",
+      "(MwSt.) €100,00",
+      "Gesamt brutto €100,00",
+      "Bezahlung",
+      "K-U-N-D-E-N-B-E-L-E-G",
+      "Apleona",
+      "Parkhaus DomAquaree",
+      "Kartenzahlung girocard",
+      "Betrag 100,00 EUR",
+      "12.10.2022 11:48",
+    ].join("\n");
+
+    const azureResult = {
+      content: ocrContent,
+      documents: [
+        {
+          confidence: 0.85,
+          fields: {
+            MerchantName: { valueString: "Parkhaus DomAquaree" },
+            Total: { valueNumber: 100, valueCurrency: { amount: 100, currencyCode: "EUR" } },
+            TransactionDate: { valueDate: "2022-10-08" },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureReceiptToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    // Should NOT use OCR multi-receipt path — OCR total should equal Azure total
+    if (result.parsed.totalGross !== 100) {
+      throw new Error(`Expected totalGross 100, got ${result.parsed.totalGross}`);
+    }
+  });
+
   // ---------- detection: Umsatzsteuer-Mail → invoice ----------
 
   Deno.test("detection: Umsatzsteuer email with 'Zahllast' returns invoice", () => {
@@ -553,6 +601,80 @@ if ("Deno" in globalThis) {
       throw new Error(
         `Expected "invoice", got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
       );
+    }
+  });
+
+  // ---------- detection: default fallback is invoice, not unknown ----------
+
+  Deno.test("detection: unrecognizable text returns invoice as default (not unknown)", () => {
+    const text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit.";
+    const result = detectDocumentType({ text });
+    if (result.documentType !== "invoice") {
+      throw new Error(
+        `Expected "invoice" as fallback, got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
+      );
+    }
+    if (!result.reasons.includes("fallback:default_invoice")) {
+      throw new Error(
+        `Expected reason "fallback:default_invoice", got: ${result.reasons.join(", ")}`
+      );
+    }
+  });
+
+  // ---------- detection: "kunden beleg" (with space) triggers receipt ----------
+
+  Deno.test("detection: 'KUNDEN BELEG' with space triggers receipt detection", () => {
+    const text = [
+      "HEM Tankstelle",
+      "25,00 Liter SÄULENNUMMER 2",
+      "Super A 40,98 EUR",
+      "1,639 EUR/Liter",
+      "KUNDEN BELEG",
+    ].join("\n");
+    const result = detectDocumentType({ text });
+    if (result.documentType !== "receipt") {
+      throw new Error(
+        `Expected "receipt", got "${result.documentType}" (reasons: ${result.reasons.join(", ")})`
+      );
+    }
+  });
+
+  // ---------- receipt mapper: OCR fallback path calculates totalNet ----------
+
+  Deno.test("receipt mapper: OCR fallback path calculates totalNet from totalGross - totalVat", () => {
+    // Simulate a multi-receipt OCR scenario where Azure provides TotalTax
+    // but the OCR path finds multiple items with a different total
+    const azureResult = {
+      content: [
+        "Ticket A € 5,00",
+        "Ticket B € 7,00",
+        "inkl. 10% USt 1,09",
+      ].join("\n"),
+      documents: [
+        {
+          confidence: 0.9,
+          fields: {
+            MerchantName: { valueString: "Transit Co" },
+            Total: { valueNumber: 5.0, valueCurrency: { amount: 5.0, currencyCode: "EUR" } },
+            TotalTax: { valueNumber: 1.09 },
+            TransactionDate: { valueDate: "2025-01-15" },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureReceiptToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    // OCR finds total 12.00, Azure single total is 5.00 → OCR path is taken
+    // totalNet should be totalGross - totalVat = 12.00 - 1.09 = 10.91
+    if (result.parsed.totalGross !== 12.0) {
+      throw new Error(`Expected totalGross 12.0, got ${result.parsed.totalGross}`);
+    }
+    if (result.parsed.totalVat !== 1.09) {
+      throw new Error(`Expected totalVat 1.09, got ${result.parsed.totalVat}`);
+    }
+    if (result.parsed.totalNet !== 10.91) {
+      throw new Error(`Expected totalNet 10.91, got ${result.parsed.totalNet}`);
     }
   });
 

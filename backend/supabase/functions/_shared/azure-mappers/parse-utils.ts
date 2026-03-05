@@ -127,7 +127,12 @@ export function parsePercent(value: string | null): number | null {
   if (!value) return null;
   const match = value.match(/([\d.,]+)/);
   if (!match) return null;
-  const normalized = match[1].replace(/\./g, "").replace(",", ".");
+  const raw = match[1];
+  // Dot as decimal separator (e.g. "19.00 %") vs German thousand separator (e.g. "1.234,56")
+  const normalized =
+    !raw.includes(",") && /\.\d{1,2}$/.test(raw)
+      ? raw
+      : raw.replace(/\./g, "").replace(",", ".");
   const percent = Number(normalized);
   if (Number.isNaN(percent)) return null;
   return percent / 100;
