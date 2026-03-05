@@ -104,6 +104,9 @@ Run all commands below from `backend/`.
   (e.g. "X XING" → "New Work SE"), tax-free invoice totalNet/totalVat fallback,
   multi-line anrede buyerName extraction (e.g. "Herr\nFlorian Hoffmann"),
   and Metro receipt extraction (RECHNUNGS-NR. hyphenated label + buyerName before KUNDE).
+  Also covers mapper sanity fixes: lineItem totalPrice decimal correction (qty×unit vs Azure amount),
+  vatItem filtering (amount > totalGross, negative netAmount), country/legal-form-only party rejection,
+  and negative totalNet correction.
   Run with: `deno test tests-backend/integration/azure-invoice-vendor-name.test.ts --no-lock`
 
 - `tests-backend/integration/azure-receipt-multi.test.ts`
@@ -140,6 +143,11 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   Also derives totalVat from vatItems sum when Azure doesn't provide `TotalTax` but has `TaxDetails`.
   Tax-free fallback: sets `totalNet = totalGross` and `totalVat = 0` when neither Azure TotalTax
   nor vatItems provide tax amounts (e.g. Führungszeugnis with 0% tax).
+  LineItem sanity: corrects `totalPrice` when `quantity × unitPrice` differs by factor >100
+  (Azure OCR decimal error, e.g. "7.560.,00 €" → 7.56 instead of 7560).
+  VatItem sanity: filters vatItems where amount > totalGross (OCR decimal misread) or
+  netAmount < 0 (deposit transfers wrongly mapped). After filtering, recalculates totalVat/totalNet.
+  Negative totalNet guard: when totalNet < 0 but totalGross > 0, recalculates from vatItems or resets.
 - **`receipt-mapper.ts`** — Handles receipts (prebuilt-receipt model). Supports multi-receipt pages
   (e.g. travel expense scans with multiple tickets on one page):
   1. Multi-document: Iterates over all `documents[]` when Azure detects multiple receipts.
@@ -201,7 +209,9 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
 - **`party-extraction.ts`** — Vendor/buyer name extraction from OCR text.
   - `BUYER_LABELS` includes hotel-specific labels ("Gastname", "Gast") for guest name extraction.
   - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
-    values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, and invoice numbers.
+    values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, invoice numbers,
+    country names (e.g. "DEUTSCHLAND"), and pure legal form strings (e.g. "GmbH & Co. KG" without
+    an actual company name).
     Strips salutation prefixes (Herrn, Herr, Frau, Mr., Mrs., Ms.) from person names.
     Iterates through all lines of multi-line values (e.g. "Herr\nFlorian Hoffmann") instead of
     only using the first line.

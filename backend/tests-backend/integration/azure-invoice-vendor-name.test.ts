@@ -284,6 +284,193 @@ if ("Deno" in globalThis) {
     }
   });
 
+  // ---------- Fix A: lineItems totalPrice decimal correction ----------
+
+  Deno.test("invoice mapper: corrects lineItem totalPrice when qty*unit differs by factor 1000", () => {
+    // Azure OCR reads "7.560.,00 €" as 7.56 instead of 7560
+    const azureResult = {
+      content: "Rechnung\nBeratung\n7.560,00 €\n",
+      documents: [
+        {
+          confidence: 0.95,
+          fields: {
+            VendorName: { valueString: "AYTU GmbH" },
+            InvoiceId: { valueString: "R-2023-06" },
+            InvoiceDate: { valueDate: "2023-06-30" },
+            InvoiceTotal: { valueCurrency: { amount: 17850, currencyCode: "EUR" } },
+            SubTotal: { valueCurrency: { amount: 15000, currencyCode: "EUR" } },
+            TotalTax: { valueCurrency: { amount: 2850, currencyCode: "EUR" } },
+            Items: {
+              valueArray: [
+                {
+                  valueObject: {
+                    Description: { valueString: "Beratung REMOTE" },
+                    Quantity: { valueNumber: 62 },
+                    UnitPrice: { valueCurrency: { amount: 120, currencyCode: "EUR" } },
+                    Amount: { valueCurrency: { amount: 7440, currencyCode: "EUR" } },
+                  },
+                },
+                {
+                  valueObject: {
+                    Description: { valueString: "Beratung ONSITE" },
+                    Quantity: { valueNumber: 56 },
+                    UnitPrice: { valueCurrency: { amount: 135, currencyCode: "EUR" } },
+                    Amount: { valueCurrency: { amount: 7.56, currencyCode: "EUR" } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureInvoiceToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    const item2 = result.parsed.lineItems?.[1];
+    if (!item2) throw new Error("Expected second line item.");
+    if (item2.totalPrice !== 7560) {
+      throw new Error(`Expected totalPrice 7560, got ${item2.totalPrice}`);
+    }
+  });
+
+  // ---------- Fix B: vatItems sanity — filter absurd amounts ----------
+
+  Deno.test("invoice mapper: filters vatItem with amount exceeding totalGross (OCR decimal error)", () => {
+    // Azure reads "3.127" (German 3,127 = 3.13 EUR) as 3127
+    const azureResult = {
+      content: "Bewirtungsbeleg\nGesamt 54,80\n",
+      documents: [
+        {
+          confidence: 0.9,
+          fields: {
+            VendorName: { valueString: "Restaurant XY" },
+            InvoiceTotal: { valueCurrency: { amount: 54.8, currencyCode: "EUR" } },
+            TaxDetails: {
+              valueArray: [
+                {
+                  valueObject: {
+                    Rate: { valueNumber: 0.07 },
+                    Amount: { valueCurrency: { amount: 3127, currencyCode: "EUR" } },
+                    NetAmount: { valueCurrency: { amount: 44.673, currencyCode: "EUR" } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureInvoiceToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    // The absurd vatItem (3127 > 54.8) should be filtered, leaving no vatItems
+    if ((result.parsed.vatItems?.length ?? 0) !== 0) {
+      throw new Error(`Expected 0 vatItems, got ${result.parsed.vatItems?.length}`);
+    }
+    // totalNet should fallback to totalGross (tax-free fallback)
+    if (result.parsed.totalNet !== 54.8) {
+      throw new Error(`Expected totalNet 54.8, got ${result.parsed.totalNet}`);
+    }
+  });
+
+  // ---------- Fix B: vatItems sanity — filter negative netAmount ----------
+
+  Deno.test("invoice mapper: filters vatItem with negative netAmount (deposit transfer)", () => {
+    const azureResult = {
+      content: "Hotel Invoice\nTotal 291.64\n",
+      documents: [
+        {
+          confidence: 0.95,
+          fields: {
+            VendorName: { valueString: "Hotel Wien" },
+            InvoiceTotal: { valueCurrency: { amount: 291.64, currencyCode: "EUR" } },
+            TaxDetails: {
+              valueArray: [
+                {
+                  valueObject: {
+                    Rate: { valueString: "10%", content: "10%" },
+                    Amount: { valueCurrency: { amount: 25.84, currencyCode: "EUR" } },
+                    NetAmount: { valueCurrency: { amount: 258.44, currencyCode: "EUR" } },
+                  },
+                },
+                {
+                  valueObject: {
+                    Rate: { valueString: "0%", content: "0%" },
+                    Amount: { valueCurrency: { amount: 0, currencyCode: "EUR" } },
+                    NetAmount: { valueCurrency: { amount: -291.64, currencyCode: "EUR" } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureInvoiceToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    // Only the valid vatItem should remain
+    if (result.parsed.vatItems?.length !== 1) {
+      throw new Error(`Expected 1 vatItem, got ${result.parsed.vatItems?.length}`);
+    }
+    if (result.parsed.totalVat !== 25.84) {
+      throw new Error(`Expected totalVat 25.84, got ${result.parsed.totalVat}`);
+    }
+  });
+
+  // ---------- Fix C: buyerName rejects country name ----------
+
+  Deno.test("cleanPartyName: rejects 'DEUTSCHLAND' as party name", async () => {
+    const { cleanPartyName } = await import(
+      "../../supabase/functions/_shared/azure-mappers/party-extraction.ts"
+    );
+    const result = cleanPartyName("DEUTSCHLAND");
+    if (result !== null) {
+      throw new Error(`Expected null for 'DEUTSCHLAND', got "${result}"`);
+    }
+  });
+
+  // ---------- Fix C: buyerName rejects pure legal form ----------
+
+  Deno.test("cleanPartyName: rejects 'GmbH & Co. KG' (pure legal form, no actual name)", async () => {
+    const { cleanPartyName } = await import(
+      "../../supabase/functions/_shared/azure-mappers/party-extraction.ts"
+    );
+    const result = cleanPartyName("GmbH & Co. KG");
+    if (result !== null) {
+      throw new Error(`Expected null for 'GmbH & Co. KG', got "${result}"`);
+    }
+  });
+
+  // ---------- Fix F: totalNet sanity — negative totalNet corrected ----------
+
+  Deno.test("invoice mapper: corrects negative totalNet when totalGross is positive", () => {
+    const azureResult = {
+      content: "Autowäsche\nGesamt 15,00\n",
+      documents: [
+        {
+          confidence: 0.9,
+          fields: {
+            VendorName: { valueString: "Waschanlage" },
+            InvoiceTotal: { valueCurrency: { amount: 15, currencyCode: "EUR" } },
+            SubTotal: { valueCurrency: { amount: -15, currencyCode: "EUR" } },
+            TotalTax: { valueCurrency: { amount: 30, currencyCode: "EUR" } },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureInvoiceToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    if (result.parsed.totalNet! < 0) {
+      throw new Error(`Expected positive totalNet, got ${result.parsed.totalNet}`);
+    }
+    if (result.parsed.totalGross !== 15) {
+      throw new Error(`Expected totalGross 15, got ${result.parsed.totalGross}`);
+    }
+  });
+
 } else {
   const { describe, it, expect } = await import("vitest");
 

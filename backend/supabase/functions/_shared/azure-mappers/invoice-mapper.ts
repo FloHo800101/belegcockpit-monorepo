@@ -201,24 +201,43 @@ export function mapAzureInvoiceToParseResult(azureResult: unknown): AzureParseRe
       itemTaxRate ??
       (itemTaxAmount != null && totalPrice ? itemTaxAmount / totalPrice : null);
 
+    // Fix A: Azure OCR sometimes misplaces decimal in totalPrice
+    // (e.g. "7.560.,00 €" → 7.56 instead of 7560).
+    // If quantity × unitPrice is available and differs by factor >100, use calculated value.
+    let correctedTotalPrice = totalPrice;
+    if (quantity && unitPrice && totalPrice != null) {
+      const expected = roundCurrency(quantity * unitPrice);
+      if (expected > 0 && totalPrice > 0) {
+        const ratio = expected / totalPrice;
+        if (ratio > 100 || ratio < 0.01) {
+          correctedTotalPrice = expected;
+        }
+      }
+    }
+
     return {
       description: getValue(itemFields.Description) || "",
       quantity,
       unitPrice,
-      totalPrice,
+      totalPrice: correctedTotalPrice,
       vatRate,
     };
   });
 
   const taxDetails = fields.TaxDetails?.valueArray ?? [];
+  const grossRef = parsed.totalGross ?? parsed.totalNet ?? null;
   parsed.vatItems = taxDetails
     .map((detail) => {
       const detailFields = detail.valueObject || {};
       const rate = parsePercent(getValue(detailFields.Rate));
       const amount = getNumber(detailFields.Amount);
       if (rate == null || amount == null) return null;
+      // Fix B: Filter absurd amounts (Azure OCR decimal error, e.g. "3.127" → 3127 instead of 3.13)
+      if (grossRef != null && grossRef > 0 && amount > grossRef) return null;
       const netAmount =
         getNumber(detailFields.NetAmount) ?? (rate > 0 ? amount / rate : amount);
+      // Fix B: Filter negative netAmounts (deposit transfers wrongly mapped as vatItems)
+      if (netAmount < 0) return null;
       return { rate, amount, netAmount };
     })
     .filter(Boolean) as ParsedDocument["vatItems"];
@@ -240,6 +259,27 @@ export function mapAzureInvoiceToParseResult(azureResult: unknown): AzureParseRe
   if (parsed.totalVat == null && parsed.totalGross != null && parsed.totalNet == null) {
     parsed.totalVat = 0;
     parsed.totalNet = parsed.totalGross;
+  }
+
+  // Fix F: Sanity — totalNet must not be negative when totalGross is positive
+  if (
+    parsed.totalNet != null &&
+    parsed.totalNet < 0 &&
+    parsed.totalGross != null &&
+    parsed.totalGross > 0
+  ) {
+    // Recalculate from vatItems or reset
+    const vatSum = roundCurrency(
+      (parsed.vatItems ?? []).reduce((s, item) => s + (item?.amount ?? 0), 0)
+    );
+    if (vatSum >= 0 && vatSum < parsed.totalGross) {
+      parsed.totalVat = vatSum;
+      parsed.totalNet = roundCurrency(parsed.totalGross - vatSum);
+    } else {
+      // No reliable VAT info — set net = gross, vat = 0
+      parsed.totalNet = parsed.totalGross;
+      parsed.totalVat = 0;
+    }
   }
 
   if ((parsed.vatItems?.length ?? 0) === 1) {
