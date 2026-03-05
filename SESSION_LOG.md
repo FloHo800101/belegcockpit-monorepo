@@ -1,3 +1,178 @@
+## Session – 2026-03-05 (11)
+
+**Beteiligte Agenten:** Explore (5x parallel, je 1 Dokument visuell pruefen)
+
+### Erledigte Aufgaben
+- **Extraction-Review fuer Tenant 139e9812** (5 Dokumente, alle Invoices)
+- Auto-Check: 0 Flags
+- Visuelle Pruefung: 1 OK, 4 Bugs gefunden — alle gefixt
+
+#### Fix 1: Fuehrungszeugnis totalNet/totalVat null (Mapper)
+- `invoice-mapper.ts`: Neuer Fallback fuer steuerfreie Belege — wenn `totalVat == null` und `totalGross != null` und `totalNet == null`, dann `totalVat = 0` und `totalNet = totalGross`
+- Ursache: Azure liefert TaxDetails mit Amount=0, aber kein TotalTax-Feld → bestehende Fallbacks greifen nicht
+
+#### Fix 2: Xing vendorName "X XING" statt "New Work SE" (Mapper)
+- `party-extraction.ts`: `pickPrimaryParty()` bevorzugt jetzt Kandidaten mit Business-Suffix (GmbH, SE, AG, etc.) gegenueber kurzen Brand/Logo-Namen (≤8 Zeichen ohne Suffix)
+- Azure liefert VendorName="X XING" (Logo) und VendorAddressRecipient="New Work SE" → jetzt wird "New Work SE" gewaehlt
+
+#### Fix 3: Metro invoiceNumber/buyerName null (doch fixbar!)
+- `installment-plan.ts`: Neue Labels "Rechnungs-Nr", "Beleg-Nr", "Bon-Nr" in `extractInvoiceNumber()` — Metro hat "RECHNUNGS-NR." mit Bindestrich
+- `party-extraction.ts` `isLikelyMetadataLine()`: "rechnungs-nr", "beleg-nr", "bon-nr" hinzugefuegt — verhindert Fehlklassifizierung als Firmenname
+- `party-extraction.ts` `extractLabeledParty()`: Neuer Fallback — wenn Buyer-Label (z.B. "KUNDE:") nur eine Nummer/ID enthaelt, wird die Zeile davor geprueft → findet "Florian Hoffmann"
+
+#### Fix 4: Freenet buyerName = Kundennummer "M22076230495" (Mapper)
+- `party-extraction.ts` `cleanPartyName()`: Iteriert jetzt ueber alle Zeilen von Multi-Line-Werten statt nur die erste Zeile. "Herr\nFlorian Hoffmann" → erste Zeile "Herr" wird gestrippt → zweite Zeile "Florian Hoffmann" wird korrekt zurueckgegeben
+- `party-extraction.ts` `looksLikeCompanyLine()`: Lehnt Strings mit hohem Ziffernanteil ab (digits > letters*2), verhindert dass IDs wie "M22076230495" als Firmenname erkannt werden
+
+#### Review-Ergebnis (5 Dokumente)
+
+| # | Dokument | Typ | Befund |
+|---|----------|-----|--------|
+| 1 | 2211_MS_II | invoice | OK |
+| 2 | 2211_Xing | invoice | vendorName "X XING" → Fix 2 |
+| 3 | 2211_Beleg_Fuehrungszeugnis | invoice | totalNet/totalVat null → Fix 1 |
+| 4 | 2211_Beleg_Metro_Weihnachtspraesente | invoice | invoiceNumber/buyerName null → Fix 3 |
+| 5 | 2212_Freenet | invoice | buyerName=Kundennr → Fix 4 |
+
+#### Tests
+- 4 neue Tests: business-suffix preference, tax-free totalNet fallback, Metro RECHNUNGS-NR.+KUNDE, multi-line anrede buyerName
+- 7/7 vendor-name + 26/26 receipt-multi + 18/18 invoice-hotel Tests bestanden
+
+### Geaenderte Dateien
+- `backend/supabase/functions/_shared/azure-mappers/invoice-mapper.ts` – tax-free totalNet/totalVat Fallback
+- `backend/supabase/functions/_shared/azure-mappers/party-extraction.ts` – cleanPartyName multi-line, looksLikeCompanyLine digit-ratio, pickPrimaryParty business-suffix, isLikelyMetadataLine hyphenierte Varianten, extractLabeledParty preceding-line Fallback
+- `backend/supabase/functions/_shared/azure-mappers/installment-plan.ts` – 3 neue Labels (Rechnungs-Nr, Beleg-Nr, Bon-Nr)
+- `backend/tests-backend/integration/azure-invoice-vendor-name.test.ts` – 4 neue Tests
+- `backend/tests-backend/README.md` – Doku-Updates
+
+### Entscheidungen & Begruendungen
+- Business-Suffix-Preference nur bei kurzen Namen (≤8 Zeichen): Laengere Namen wie "Deutsche Bahn" sollten nicht durch Suffix-Kandidaten ersetzt werden
+- Digit-Ratio-Schwelle `digits > letters*2`: Konservativ genug um echte Firmennamen wie "3M" nicht abzulehnen
+- Metro doch fixbar: "RECHNUNGS-NR." (mit Bindestrich) fehlte als Label, und buyerName vor "KUNDE:"-Zeile extrahierbar
+
+### Learnings
+- Azure VendorName ist oft Logo-Text (OCR aus dem Bild), waehrend VendorAddressRecipient den rechtlichen Firmennamen enthaelt
+- Multi-Line Azure-Felder (z.B. "Herr\nFlorian Hoffmann") muessen zeilenweise verarbeitet werden — nur die erste Zeile zu nehmen verliert den eigentlichen Namen
+- `looksLikeCompanyLine` Regex `/^[A-Z0-9&.,'"\- ]{6,}$/` ist zu permissiv fuer IDs mit fuehrendem Buchstaben
+
+### Offene Punkte / Naechste Schritte
+- [ ] Re-Parse fuer Tenant 139e9812: `TENANT_ID=139e9812-aeaf-496a-8598-f1699d05c6df FORCE_REPARSE=1 pnpm test:azure-mappers`
+- [ ] Backfill-Extractions + Backfill-Invoices fuer den Tenant
+- [ ] Edge Function redeployen
+
+---
+
+## Session – 2026-03-05 (10)
+
+**Beteiligte Agenten:** Explore (1x Review aller 6 unknown-Dokumente)
+
+### Erledigte Aufgaben
+- **6 "unknown"-Extractions analysiert** aus DB-Export (`document_extractions_rows (1).json`)
+- Ursache: Alle 6 haetten mit aktuellem Code korrekt erkannt werden muessen — Detection-Keywords matchen. DB-Werte stammen von aelterer Code-Version vor Keyword-Erweiterungen
+
+#### Fix 1: Default von `unknown` auf `invoice`
+- `document-type-detection.ts`: Fallback-Return liefert jetzt `invoice` mit `confidence: 0.1` und Reason `fallback:default_invoice` statt `unknown`/`0`
+- Begruendung: Jedes hochgeladene Dokument ist entweder Invoice oder Receipt — Invoice ist der sicherere Default
+
+#### Fix 2: Neue Receipt-Keywords
+- `document-type-detection.ts`: `kunden beleg` (mit Leerzeichen, z.B. HEM Tankbelege) und `quittungsnummer` (z.B. Aral Tankbelege) hinzugefuegt
+- Behebt: Edge Cases wo OCR "KUNDEN BELEG" statt "KUNDENBELEG" liefert
+
+#### Fix 3: totalNet-Fallback im OCR-Fallback-Pfad
+- `receipt-mapper.ts`: Der OCR-Fallback-Pfad (multi-receipt OCR-Erkennung) berechnet jetzt `totalNet = totalGross - totalVat` — wie es im single-receipt-Pfad bereits funktioniert
+- Betrifft: Dokumente wo Azure kein Subtotal liefert aber TotalTax vorhanden ist
+
+#### Review-Ergebnis (6 Dokumente)
+
+| # | Dokument | Typ | Befund |
+|---|----------|-----|--------|
+| 0 | Parkschein | receipt | vendorName=null (Azure kein MerchantName) |
+| 1 | USt-Mail | invoice | vendor/buyer vertauscht (Azure, E-Mail-Format) |
+| 2 | Parkhaus 07.05 | receipt | OK, totalNet fehlte → Fix 3 |
+| 3 | Parkhaus 06.05 | receipt | OK, totalNet fehlte → Fix 3 |
+| 4 | HEM Tanke | receipt | OK, totalVat plausibel berechnet |
+| 5 | Aral Tanke | receipt | OK, totalVat plausibel berechnet |
+
+#### Tests & Backfills
+- 3 neue Tests: default-to-invoice, "KUNDEN BELEG" mit Leerzeichen, OCR-totalNet-Berechnung
+- 26/26 receipt-multi + 18/18 invoice-hotel Tests bestanden
+- Re-Parse: `FORCE_REPARSE=1 pnpm test:azure-mappers` → 13 updated
+- Backfill-Extractions: 13 updated, Backfill-Invoices: 67 inserted
+
+### Geaenderte Dateien
+- `backend/supabase/functions/_shared/document-type-detection.ts` – Default invoice statt unknown + 2 neue Keywords
+- `backend/supabase/functions/_shared/azure-mappers/receipt-mapper.ts` – totalNet-Fallback im OCR-Pfad
+- `backend/tests-backend/integration/azure-receipt-multi.test.ts` – 3 neue Tests
+- `backend/tests-backend/README.md` – Doku-Updates (keine unknown mehr, neue Keywords, totalNet in allen Pfaden)
+
+### Entscheidungen & Begruendungen
+- Default `invoice` statt `unknown`: Kein Dokument im System ist "unknown" — entweder Receipt oder Invoice. Invoice als Default ist sicherer weil der Invoice-Mapper mehr Felder extrahiert
+- `kunden beleg` als eigenes Keyword: OCR trennt manchmal zusammengesetzte Woerter — besser explizit matchen
+- totalNet-Fallback in allen 3 receipt-mapper-Pfaden: Universelle Buchhaltungsregel, konsistent mit invoice-mapper
+
+### Learnings
+- Die 6 unknown-Eintraege waren KEINE Code-Bugs sondern **veraltete DB-Daten** — der aktuelle Code haette sie korrekt erkannt. Re-Parse behebt das Problem
+- OCR kann zusammengesetzte Woerter trennen ("KUNDEN BELEG" statt "KUNDENBELEG") oder mit Bindestrichen schreiben ("K-U-N-D-E-N-B-E-L-E-G") — Keywords muessen Varianten abdecken
+
+### Offene Punkte / Naechste Schritte
+- [ ] Pruefen ob die 6 unknown-Dokumente jetzt korrekt in der DB stehen (diese hatten keine analyze_runs)
+- [ ] Edge Function redeployen
+- [ ] Doc 1 (USt-Mail): vendor/buyer-Vertauschung ist Azure-Limitation bei E-Mails — kein Mapper-Fix moeglich
+
+---
+
+## Session – 2026-03-05 (9)
+
+**Beteiligte Agenten:** Keine Subagenten (direkte Fixes)
+
+### Erledigte Aufgaben
+- **4 Extraction-Bugs gefixt** aus dem Review der Session 8:
+
+#### Fix 1: parsePercent Bug (Hays vatRate=19 statt 0.19)
+- `parse-utils.ts`: `parsePercent("19.00 %")` entfernte den Dezimalpunkt als Tausendertrenner → 1900/100=19
+- Fix: Dot-als-Dezimal erkennen wenn kein Komma vorhanden und Dot gefolgt von 1-2 Ziffern
+- Betrifft: Alle Dokumente mit Azure TaxDetails Rate im Format "X.XX %"
+
+#### Fix 2: Parken_WS_EGS = unknown → receipt
+- `document-type-detection.ts`: Keywords `parkschein` und `parkzeit` hinzugefügt
+- Ergibt 2 Keyword-Hits → Receipt-Klassifizierung
+
+#### Fix 3: Berlin_Hotel invoiceNumber="RECHNUNGSDATUM"
+- `installment-plan.ts`: Label-Blocklist in `normalizeInvoiceNumberCandidate()` — bekannte Label-Wörter (RECHNUNGSDATUM, DATUM, SEITE, ZIMMER, ANREISE, ABREISE, TOTAL, SUMME, NETTO, BRUTTO, etc.) werden als invoiceNumber abgelehnt
+- Ursache: OCR liest "Rechnungsnummer: Rechnungsdatum" als eine Zeile, "Rechnungsdatum" wird als Wert extrahiert
+
+#### Fix 4: Bewirtung_EGS totalVat/totalNet=null
+- `invoice-mapper.ts`: Fallback — wenn Azure kein TotalTax liefert aber TaxDetails/vatItems vorhanden, wird totalVat aus Summe der vatItems-Amounts berechnet, totalNet = totalGross - totalVat
+- Ergebnis: totalVat=10.92, totalNet=99.08, totalGross=110
+
+#### Tests
+- 41/41 relevante Tests bestanden (azure-receipt-multi + azure-invoice-hotel)
+- 71/71 Gesamttests bestanden (2 pre-existing Deno-Permission-Fehler in upload-documents und live-replay)
+
+### Geänderte Dateien
+- `backend/supabase/functions/_shared/azure-mappers/parse-utils.ts` – parsePercent Dot-Dezimal-Fix
+- `backend/supabase/functions/_shared/document-type-detection.ts` – 2 neue Receipt-Keywords
+- `backend/supabase/functions/_shared/azure-mappers/installment-plan.ts` – Label-Blocklist für invoiceNumber
+- `backend/supabase/functions/_shared/azure-mappers/invoice-mapper.ts` – totalVat-Fallback aus vatItems
+- `backend/tests-backend/README.md` – Doku-Updates für alle 4 Fixes
+
+### Entscheidungen & Begründungen
+- `parsePercent` unterscheidet jetzt Dot-als-Dezimal (kein Komma + Dot vor 1-2 Ziffern am Ende) von Dot-als-Tausendertrenner (Komma vorhanden oder Dot vor 3+ Ziffern)
+- Label-Blocklist statt Regex-Pattern: Explizite Wortliste ist wartbarer und hat keine False Positives
+- totalVat-Fallback aus vatItems: Universelle Buchhaltungsregel, TaxDetails sind vertrauenswürdig
+
+### Learnings
+- Azure liefert Prozent-Werte im Format "19.00 %" (Dot-Dezimal), während deutsche Beträge "1.234,56" (Dot-Tausender) verwenden — `parsePercent` muss beides unterscheiden
+- OCR-Zeilen wie "Rechnungsnummer: Rechnungsdatum" entstehen bei Hotels wo beide Labels nebeneinander stehen — eine Blocklist für bekannte Label-Wörter ist die sicherste Lösung
+- Azure TotalTax fehlt bei Kassenbons/Bewirtungsbelegen häufig, obwohl TaxDetails korrekt extrahiert werden
+
+### Offene Punkte / Nächste Schritte
+- [ ] Re-Parse aller Tenants laufen lassen (behebt stale DB-Daten)
+- [ ] Edge Function redeployen (damit neue Live-Dokumente alle Fixes bekommen)
+- [ ] Berlin_Hotel: Echte Rechnungsnummer AAV2A26746 wird nicht extrahiert (steht auf separater Zeile nach dem Label) — optionaler Follow-up
+
+---
+
 ## Session – 2026-03-03 (8)
 
 **Beteiligte Agenten:** Explore (6x parallel Batches à 2 Docs für Visual Review aller 50 Dokumente)

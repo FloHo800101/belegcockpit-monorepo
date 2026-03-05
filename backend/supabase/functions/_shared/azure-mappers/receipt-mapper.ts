@@ -47,6 +47,11 @@ function extractReceiptItemsFromOcr(
         continue;
       }
 
+      // Skip total/summary lines (e.g. "Gesamt brutto €100,00", "Betrag 100,00 EUR")
+      if (/gesamt|summe|betrag|total|endbetrag/i.test(textBeforeMatch)) {
+        continue;
+      }
+
       // Build description from surrounding context
       const contextLines: string[] = [];
       for (let j = Math.max(0, i - 3); j <= i; j++) {
@@ -210,14 +215,16 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
 
   if (hasMultipleOcrAmounts && ocrTotalDiffersFromAzure) {
     // OCR found more receipts than Azure – use OCR extraction
+    const ocrTotalVat = getNumber(fields.TotalTax);
+    const ocrTotalNet = ocrTotalVat != null ? roundCurrency(ocrExtraction.total - ocrTotalVat) : null;
     const parsed: ParsedDocument = {
       sourceType: "receipt",
       documentType: "receipt",
       invoiceNumber: extractInvoiceNumber(contentText) ?? undefined,
       invoiceDate: resolvePreferredDate(fields.TransactionDate) ?? extractLatestDateFromOcr(contentText) ?? undefined,
       vendorName: cleanPartyName(getValue(fields.MerchantName)),
-      totalNet: null,
-      totalVat: getNumber(fields.TotalTax),
+      totalNet: ocrTotalNet,
+      totalVat: ocrTotalVat,
       totalGross: ocrExtraction.total,
       currency: ocrCurrency || fields.Total?.valueCurrency?.currencyCode || "EUR",
       lineItems: ocrExtraction.items,

@@ -66,8 +66,12 @@ export function extractInvoiceNumber(content: string | null | undefined): string
   const labels = [
     "Rechnungsnummer",
     "Rechnung Nr",
+    "Rechnungs-Nr",
     "Rechnungsnr",
     "Re-Nr",
+    "Beleg-Nr",
+    "Belegnr",
+    "Bon-Nr",
     "Auftragsnummer",
     "Bestellnummer",
     "Invoice number",
@@ -100,6 +104,8 @@ export function normalizeInvoiceNumberCandidate(value: string | null | undefined
   if (/^(UID|VAT|TAX)$/i.test(token)) return null;
   if (/^[A-Z]{1,4}$/.test(token)) return null;
   if (/^(DE)?\d{9,}$/.test(token)) return null;
+  // Reject known label words that OCR may capture as invoice number values
+  if (/^(RECHNUNGSDATUM|RECHNUNGSNUMMER|DATUM|SEITE|ZIMMER|ANREISE|ABREISE|TOTAL|SUMME|NETTO|BRUTTO|BESCHREIBUNG|EINZELPREIS|NETTOBETRAG|STEUERSATZ|MEHRWERTSTEUER)$/i.test(token)) return null;
   return token;
 }
 

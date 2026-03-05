@@ -79,7 +79,7 @@ export function isLikelyAddressOrContactLine(value: string): boolean {
 export function isLikelyMetadataLine(value: string): boolean {
   const normalized = normalizeOcrText(value).toLowerCase();
   if (!normalized) return true;
-  return /\b(rechnungsnr|rechnungnr|kundennr|kundenr|ust-?id|datum|leistungszeitraum|pos\.?|bezeichnung|menge|einheit|gesamtbetrag|zwischensumme|umsatzsteuer|zahlbar|vielen dank|seite)\b/.test(
+  return /\b(rechnungsnr|rechnungs-nr|rechnungnr|kundennr|kundenr|beleg-?nr|bon-?nr|ust-?id|datum|leistungszeitraum|pos\.?|bezeichnung|menge|einheit|gesamtbetrag|zwischensumme|umsatzsteuer|zahlbar|vielen dank|seite)\b/.test(
     normalized
   );
 }
@@ -89,6 +89,10 @@ export function looksLikeCompanyLine(value: string): boolean {
   if (!normalized) return false;
   if (!/[A-Za-zÄÖÜäöü]/.test(normalized)) return false;
   if (isLikelyMetadataLine(normalized)) return false;
+  // Reject strings that are mostly digits (e.g. invoice/customer numbers like "M22076230495")
+  const digits = (normalized.match(/\d/g) || []).length;
+  const letters = (normalized.match(/[A-Za-zÄÖÜäöü]/g) || []).length;
+  if (digits > letters * 2) return false;
   if (
     /\b(gmbh|mbh|ag|kg|ug|ohg|gbr|llc|inc|ltd|sarl|sa|b\.v\.|bv)\b/i.test(
       normalized
@@ -101,24 +105,29 @@ export function looksLikeCompanyLine(value: string): boolean {
 
 export function cleanPartyName(value: string | null | undefined): string | null {
   if (!value) return null;
-  const firstLine = value.split(/\r?\n/).map((line) => normalizeOcrText(line))[0] ?? "";
-  if (isLikelyMetadataLine(firstLine)) return null;
-  let candidate = firstLine
-    .replace(/^[\s:;,\-]+/, "")
-    .replace(
-      /^(rechnungsempf[aä]nger|rechnungsempfaenger|rechnungssteller|kunde|customer|bill\s*to|invoice\s*to|vendor|seller|supplier|empf[aä]nger|gastname|gast)\s*[:\-]?\s*/i,
-      ""
-    )
-    .replace(/^(Herrn|Herr|Frau|Mr\.?|Mrs\.?|Ms\.?)(?:\s+|$)/i, "")
-    .replace(/\b(?:RE|RG|INV)[-_ ]?\d{2,}[A-Z0-9/_-]*\b.*$/i, "")
-    .trim();
-  candidate = candidate.replace(/\s+/g, " ").replace(/[,;:]+$/, "");
-  if (!candidate) return null;
-  if (/^(?:nr|nnr|kundennr|rechnungsnr)\b/i.test(candidate)) return null;
-  if (!/[A-Za-zÄÖÜäöü]/.test(candidate)) return null;
-  // Single characters are never valid party names (e.g. logo letters like "N")
-  if (candidate.length < 2) return null;
-  return candidate;
+  const lines = value.split(/\r?\n/).map((line) => normalizeOcrText(line)).filter(Boolean);
+  if (!lines.length) return null;
+
+  for (const line of lines) {
+    if (isLikelyMetadataLine(line)) continue;
+    let candidate = line
+      .replace(/^[\s:;,\-]+/, "")
+      .replace(
+        /^(rechnungsempf[aä]nger|rechnungsempfaenger|rechnungssteller|kunde|customer|bill\s*to|invoice\s*to|vendor|seller|supplier|empf[aä]nger|gastname|gast)\s*[:\-]?\s*/i,
+        ""
+      )
+      .replace(/^(Herrn|Herr|Frau|Mr\.?|Mrs\.?|Ms\.?)(?:\s+|$)/i, "")
+      .replace(/\b(?:RE|RG|INV)[-_ ]?\d{2,}[A-Z0-9/_-]*\b.*$/i, "")
+      .trim();
+    candidate = candidate.replace(/\s+/g, " ").replace(/[,;:]+$/, "");
+    if (!candidate) continue;
+    if (/^(?:nr|nnr|kundennr|rechnungsnr)\b/i.test(candidate)) continue;
+    if (!/[A-Za-zÄÖÜäöü]/.test(candidate)) continue;
+    // Single characters are never valid party names (e.g. logo letters like "N")
+    if (candidate.length < 2) continue;
+    return candidate;
+  }
+  return null;
 }
 
 export function extractNameFromRecipientField(field?: AzureField | null): string | null {
@@ -200,7 +209,31 @@ export function extractLabeledParty(
     }
   }
 
+  // Fallback: when a buyer label is found inline but value is just a number/ID (e.g. "KUNDE: 33 109407"),
+  // check the line immediately before the label for a person/party name
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    for (const label of labels) {
+      const labelWithValueRegex = new RegExp(
+        `^${escapeRegex(label).replace(/\s+/g, "\\s+")}\\s*[:\\-]`,
+        "i"
+      );
+      if (!labelWithValueRegex.test(line)) continue;
+      // Label found but inline value was rejected → check preceding line
+      if (i > 0) {
+        const preceding = cleanPartyName(lines[i - 1]);
+        if (preceding && !isLikelyAddressOrContactLine(preceding)) return preceding;
+      }
+    }
+  }
+
   return null;
+}
+
+function hasBusinessSuffix(value: string): boolean {
+  return /\b(gmbh|mbh|ag|kg|ug|ohg|gbr|se|ek|e\.k\.|ltd|llc|inc|sarl|sa|b\.v\.|bv|co\.?)\b/i.test(
+    value
+  );
 }
 
 export function pickPrimaryParty(
@@ -211,9 +244,20 @@ export function pickPrimaryParty(
     .map((candidate) => cleanPartyName(candidate ?? null))
     .filter(Boolean) as string[];
   if (!cleaned.length) return null;
-  if (!distinctFrom) return cleaned[0];
-  const distinct = cleaned.find((candidate) => !samePartyName(candidate, distinctFrom));
-  return distinct ?? cleaned[0];
+
+  const eligible = distinctFrom
+    ? cleaned.filter((c) => !samePartyName(c, distinctFrom))
+    : cleaned;
+  const pool = eligible.length ? eligible : cleaned;
+
+  // Prefer candidates with a business suffix (GmbH, SE, AG, …) over short brand/logo names
+  const first = pool[0];
+  if (first && !hasBusinessSuffix(first) && first.length <= 8) {
+    const withSuffix = pool.find((c) => hasBusinessSuffix(c));
+    if (withSuffix) return withSuffix;
+  }
+
+  return first ?? cleaned[0];
 }
 
 export function extractLabeledDate(
