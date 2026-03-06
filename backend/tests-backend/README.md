@@ -97,6 +97,15 @@ Run all commands below from `backend/`.
   Includes Qonto DD/MM date format regression test.
   Run with: `deno test tests-backend/integration/azure-bank-statement-fx.test.ts --no-lock`
 
+- `tests-backend/integration/bank-statement-quality.test.ts`
+  Deno unit tests for bank statement data quality fixes:
+  - Phantom transaction filtering (closing balance amounts, all-same-amount garbage patterns)
+  - `cleanBankCounterpartyName()` (VISA prefix stripping, STEUERNR rejection, reference number
+    rejection, Dauerauftrag/Gehalt prefix stripping)
+  - `coerceDate()` validation (invalid month rejection, far-future date rejection)
+  - Timesheet anti-bank-statement detection (Zeiterfassungsbogen keywords)
+  Run with: `deno test tests-backend/integration/bank-statement-quality.test.ts --no-lock`
+
 - `tests-backend/integration/azure-invoice-vendor-name.test.ts`
   Deno unit tests for vendor name extraction edge cases in invoice mapper.
   Covers single-char logo rejection (e.g. Notion "N"), short multi-char names (e.g. "DB"),
@@ -183,6 +192,14 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   2. `extractTransactionsFromStatementLines` — From OCR line patterns.
   3. `extractTransactions` — Legacy fallback (single-line regex).
   Results from (1) and (2) are merged via `mergeBankStatementTransactions`.
+  Post-extraction quality gates:
+  - `filterPhantomTransactions()` — Removes transactions whose absolute amount matches
+    the opening/closing balance (summary lines parsed as transactions), and detects
+    all-identical-amount patterns (e.g. 110x "7510.PST3" at 0.03 from timesheet project
+    codes parsed by the legacy pipeline).
+  - `cleanBankCounterpartyName()` — Strips VISA card prefixes + trailing transaction IDs,
+    detects tax reference strings (STEUERNR) and pure reference numbers as counterparty,
+    strips "Dauerauftrag/Terminueberw." and "Gehalt/Rente" prefixes.
 - **`layout-mapper.ts`** — Fallback for generic layout analysis.
 
 ### Helper modules
@@ -212,6 +229,11 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
     removes unmatched lines whose date+absolute amount matches any items-sourced transaction,
     catching phantom lines (ING value-date echoes) and opposite-sign duplicates (Qonto
     Eingänge/Ausgänge sections).
+  - `cleanBankCounterpartyName()` — Post-processing cleanup for bank transaction counterparty
+    names. Strips VISA card prefixes and trailing transaction-specific codes (e.g.
+    "VISA LIMEHOME GMBH KXRVYZEU" → "LIMEHOME GMBH"), returns null for tax reference strings
+    (STEUERNR) and pure reference numbers, strips "Dauerauftrag/Terminueberw." and
+    "Gehalt/Rente" booking-type prefixes.
 - **`bank-statement-fx.ts`** — Foreign currency detection and exchange rate extraction.
 - **`parse-utils.ts`** — Shared parsing (dates, amounts, IBAN, BIC, currency, text normalization).
   - `parsePercent()` — Handles both dot-decimal ("19.00 %") and German comma-decimal ("19,00 %")
@@ -264,6 +286,8 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   (`process-document`) and Node.js backfill scripts:
   - `normalizeString()` — Trims whitespace, returns null for empty/non-string values.
   - `coerceDate()` — Parses ISO, DD.MM.YYYY, and YYYYMMDD date formats to `YYYY-MM-DD`.
+    Validates month/day ranges and rejects dates more than 1 year in the future
+    (prevents balance summary lines with invalid dates from creating phantom transactions).
   - `toNumber()` — Converts number/string values (handles German comma decimals).
   - `buildTransactionReference()` — Prefers dedicated reference field over description.
 
@@ -282,6 +306,11 @@ Classifies documents into `invoice`, `bank_statement`, or `receipt` using:
 Bank keywords use specific terms (`buchungstag`, `buchungstext`, `buchung / verwendungszweck`)
 instead of the generic `buchung` to avoid false positives on train tickets ("Die Buchung Ihres
 Online-Tickets").
+
+Anti-bank-statement signals include hotel/rental keywords and timesheet/payroll keywords
+(`zeiterfassung`, `zeiterfassungsbogen`, `arbeitszeit-code`, `arbeitszeitnachweis`,
+`stundennachweis`, `stundenuebersicht`). When >= 2 anti-statement keywords match,
+bank_statement classification is suppressed.
 
 Receipt detection uses keywords: `einzelkarte`, `fahrkarte`, `fahrschein`, `quittung`,
 `kassenbon`, `kassenbeleg`, `kundenbeleg`, `reisekosten`, `ticket`, `online-ticket`,

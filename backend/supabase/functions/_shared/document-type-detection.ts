@@ -198,6 +198,9 @@ export function detectDocumentType(input: DetectionInput): DetectionResult {
     "check-in", "check-out",
     "mietwagen", "mietvertrag", "fahrzeug", "mietzeitraum",
     "buchungsbestaetigung", "reservierung",
+    // Timesheets / payroll documents
+    "zeiterfassung", "zeiterfassungsbogen", "arbeitszeit-code",
+    "arbeitszeitnachweis", "stundennachweis", "stundenuebersicht",
   ];
   const antiStatementHitCount = antiStatementKeywords.filter((kw) => normalized.includes(kw)).length;
   const hasAntiStatementHint = antiStatementHitCount >= 2;

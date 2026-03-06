@@ -73,6 +73,49 @@ export function extractCounterpartyName(description: string): string | null {
   return cleaned || null;
 }
 
+/**
+ * Post-processing cleanup for bank transaction counterparty names.
+ * Strips VISA/card prefixes + trailing transaction IDs, and detects
+ * tax reference strings that were incorrectly placed in counterparty.
+ */
+export function cleanBankCounterpartyName(name: string | null): string | null {
+  if (!name) return null;
+  let cleaned = name.trim();
+
+  // Strip "VISA " prefix and trailing transaction-specific codes
+  // e.g. "VISA LIMEHOME GMBH KXRVYZEU" → "LIMEHOME GMBH"
+  // e.g. "VISA MSFT * E0500PBXHJ" → "MSFT"
+  const visaMatch = cleaned.match(
+    /^VISA\s+(.+?)(?:\s+[A-Z0-9*]{6,}|\s*\*\s*[A-Z0-9]+)$/i
+  );
+  if (visaMatch) {
+    cleaned = visaMatch[1].trim();
+  } else if (/^VISA\s+/i.test(cleaned)) {
+    // Simple VISA prefix strip for cases without trailing code
+    cleaned = cleaned.replace(/^VISA\s+/i, "").trim();
+  }
+
+  // Detect tax reference strings used as counterparty name
+  // e.g. "STEUERNR 031/033/61486 EINK.ST 2020 87,00EUR UMS.ST JAN.23"
+  if (/^STEUERNR\b/i.test(cleaned) || /^ST\.?NR\.?\s/i.test(cleaned)) {
+    return null;
+  }
+
+  // Detect pure reference/account numbers as counterparty
+  // e.g. "10580804 PI-FN1605 34 03 22" (digits + hyphenated code + digits)
+  if (/^\d{6,}\s+[A-Z]{2}-[A-Z0-9]+/.test(cleaned)) {
+    return null;
+  }
+
+  // Strip "Dauerauftrag/Terminueberw." and "Gehalt/Rente" prefixes
+  cleaned = cleaned
+    .replace(/^Dauerauftrag\/Terminueberw\.\s*/i, "")
+    .replace(/^Gehalt\/Rente\s+/i, "")
+    .trim();
+
+  return cleaned || null;
+}
+
 // --- Reference block parsing ---
 
 export interface ParsedReferenceBlock {
