@@ -18,6 +18,7 @@ import {
   extractTransactionsFromItems,
   extractTransactionsFromStatementLines,
   mergeBankStatementTransactions,
+  cleanBankCounterpartyName,
 } from "./bank-statement-transactions.ts";
 
 function extractBankStatementMetadata(content: string): {
@@ -73,6 +74,60 @@ function extractBankStatementMetadata(content: string): {
       extractFirstLineValue(content, "Account Holder") ??
       null,
   };
+}
+
+import type { ParsedTransaction } from "../types.ts";
+
+/**
+ * Filters out phantom transactions that are parsing artifacts:
+ * 1. Transactions whose absolute amount matches the opening/closing balance
+ *    (balance summary lines accidentally parsed as transactions)
+ * 2. All-identical-amount patterns where every tx has the same counterpartyName
+ *    AND same amount (e.g. 110x "7510.PST3" at 0.03 from timesheet project codes)
+ */
+function filterPhantomTransactions(
+  transactions: ParsedTransaction[],
+  openingBalance: number | null | undefined,
+  closingBalance: number | null | undefined
+): ParsedTransaction[] {
+  if (!transactions.length) return transactions;
+
+  // 1. Remove transactions matching balance amounts (likely summary lines)
+  const balanceAmounts = new Set<number>();
+  if (openingBalance != null && Number.isFinite(openingBalance)) {
+    balanceAmounts.add(Math.abs(openingBalance));
+  }
+  if (closingBalance != null && Number.isFinite(closingBalance)) {
+    balanceAmounts.add(Math.abs(closingBalance));
+  }
+
+  let filtered = transactions;
+  if (balanceAmounts.size > 0) {
+    filtered = filtered.filter((tx) => {
+      const absAmount = Math.abs(typeof tx.amount === "number" ? tx.amount : 0);
+      // Only filter if the amount is large enough to plausibly be a balance
+      // (avoids filtering small legitimate transactions that coincidentally match)
+      if (absAmount < 1000) return true;
+      return !balanceAmounts.has(absAmount);
+    });
+  }
+
+  // 2. Detect all-same-amount-and-counterparty pattern (garbage extraction)
+  if (filtered.length >= 5) {
+    const firstAmount = typeof filtered[0].amount === "number" ? filtered[0].amount : null;
+    const firstName = filtered[0].counterpartyName ?? "";
+    const allSame = firstAmount != null && filtered.every((tx) => {
+      const amt = typeof tx.amount === "number" ? tx.amount : null;
+      const name = tx.counterpartyName ?? "";
+      return amt === firstAmount && name === firstName;
+    });
+    if (allSame) {
+      // All transactions are identical — this is a parsing artifact, return empty
+      return [];
+    }
+  }
+
+  return filtered;
 }
 
 function resolveReferenceYear(
@@ -149,16 +204,28 @@ export function mapAzureBankStatementToParseResult(
       /kontostand am [\d./]+\s*([+-]?\s?\d[\d., ]*\d(?:[.,]\d{2}))(?![\s\S]*kontostand am)/i,
     ]);
 
+  // --- Quality gate: filter phantom / garbage transactions ---
+  const filteredTransactions = filterPhantomTransactions(
+    transactions,
+    openingBalance,
+    closingBalance
+  );
+
+  // --- Clean counterparty names ---
+  for (const tx of filteredTransactions) {
+    tx.counterpartyName = cleanBankCounterpartyName(tx.counterpartyName ?? null);
+  }
+
   const iban = extractIban(content);
   const bic = extractBic(content);
   const hasStrongMetadata =
     Boolean(iban || bic) &&
     Boolean(statementPeriod || statementDate || openingBalance != null || closingBalance != null);
-  const isLikelyBankStatement = transactions.length > 0 || hasStrongMetadata;
+  const isLikelyBankStatement = filteredTransactions.length > 0 || hasStrongMetadata;
   const confidence = Math.min(
     0.95,
     0.4 +
-      Math.min(0.35, transactions.length * 0.02) +
+      Math.min(0.35, filteredTransactions.length * 0.02) +
       (hasStrongMetadata ? 0.15 : 0) +
       (statementPeriod ? 0.05 : 0)
   );
@@ -177,7 +244,7 @@ export function mapAzureBankStatementToParseResult(
     statementPeriod,
     openingBalance,
     closingBalance,
-    transactions,
+    transactions: filteredTransactions,
     source: {
       fileName: fileName ?? undefined,
       extractedBy: "azure",
@@ -187,7 +254,8 @@ export function mapAzureBankStatementToParseResult(
       extractionPipeline,
       itemsCount: parsedFromItems.length,
       lineCount: parsedFromLines.length,
-      mergedCount: transactions.length,
+      mergedCount: filteredTransactions.length,
+      filteredCount: transactions.length - filteredTransactions.length,
       dedupMatchedCount: merged.dedupMatchedCount,
       qualityGatePassed: isLikelyBankStatement,
     },

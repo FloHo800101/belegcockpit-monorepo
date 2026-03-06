@@ -1,3 +1,60 @@
+## Session – 2026-03-06 (15)
+
+**Beteiligte Agenten:** Explore, General-Purpose (DB-Analyse x3)
+
+### Erledigte Aufgaben
+- **bank_transactions Qualitaet analysiert und Parsing verbessert** fuer Tenant a6a3fd7d
+
+#### Analyse: 401 bank_transactions, 138 mit Qualitaetsproblemen
+- 263 sauber (65.6%), 110x "7510.PST3" Garbage (27.4%), 15x VISA-Prefix (3.7%), 7x Steuerart als counterparty (1.7%), 4x NULL, 2x Referenz als counterparty, 1x Saldo als Transaktion (274K EUR)
+
+#### Ursachen identifiziert
+- **7510.PST3**: 5 AYTU GmbH Zeiterfassungsboegen falsch als bank_statement klassifiziert, legacy_lines Parser extrahiert Projektcodes als Transaktionen
+- **274K EUR Saldo**: Schlusssaldo-Zeile von Girokonto-Auszug als Transaktion geparst, ungueltiges Datum "2026-22-12" zu heutigem Datum coerced
+- **STEUERNR als counterparty**: Verwendungszweck-Text in counterparty_name statt reference
+- **VISA-Prefix**: Karten-Metadaten + Transaktions-IDs nicht bereinigt
+
+#### Fix 1: document-type-detection.ts — Timesheet anti-bank-statement
+- Neue antiStatementKeywords: `zeiterfassung`, `zeiterfassungsbogen`, `arbeitszeit-code`, `arbeitszeitnachweis`, `stundennachweis`, `stundenuebersicht`
+- Bei >= 2 Hits wird bank_statement Klassifizierung unterdrueckt
+
+#### Fix 2: bank-statement-mapper.ts — filterPhantomTransactions()
+- Filtert Transaktionen deren |amount| dem opening/closingBalance entspricht (>= 1000 EUR)
+- Erkennt all-same-amount-and-counterparty Muster (>= 5 identische Transaktionen → Garbage)
+- cleanBankCounterpartyName() wird auf alle Transaktionen angewendet
+
+#### Fix 3: bank-statement-transactions.ts — cleanBankCounterpartyName()
+- VISA-Prefix + trailing Transaktions-IDs strippen ("VISA LIMEHOME GMBH KXRVYZEU" → "LIMEHOME GMBH")
+- STEUERNR-Strings als counterparty → null
+- Reine Referenznummern ("10580804 PI-FN1605 34 03 22") → null
+- "Dauerauftrag/Terminueberw." und "Gehalt/Rente" Prefixe strippen
+
+#### Fix 4: upsert-helpers.ts — coerceDate() Validierung
+- Strikte Monats/Tag-Validierung (Monat 1-12, Tag 1-31)
+- Zukunftsdaten > 1 Jahr werden abgelehnt
+- validateDateRange() prueft Kalender-Konsistenz (kein 30. Februar etc.)
+
+### Geaenderte Dateien
+- `backend/supabase/functions/_shared/document-type-detection.ts` — antiStatementKeywords erweitert
+- `backend/supabase/functions/_shared/azure-mappers/bank-statement-mapper.ts` — filterPhantomTransactions(), cleanBankCounterpartyName-Integration
+- `backend/supabase/functions/_shared/azure-mappers/bank-statement-transactions.ts` — cleanBankCounterpartyName()
+- `backend/supabase/functions/_shared/upsert-helpers.ts` — coerceDate() mit Validierung
+- `backend/tests-backend/integration/bank-statement-quality.test.ts` — 13 neue Tests (NEU)
+- `backend/tests-backend/README.md` — Dokumentation aktualisiert
+
+### Entscheidungen
+- Balance-Filter greift nur bei Betraegen >= 1000 EUR (vermeidet false positives bei kleinen Betraegen)
+- All-same-amount Filter greift ab 5+ identischen Transaktionen
+- VISA-Bereinigung: Prefix immer strippen, trailing Code nur wenn >= 6 Zeichen alphanumerisch
+- coerceDate: max 1 Jahr in die Zukunft erlaubt (fuer Vorauszahlungen etc.)
+
+### Offene Punkte
+- [ ] Re-Parse + Backfill ausfuehren um bestehende fehlerhafte DB-Daten zu korrigieren
+- [ ] "Zins/Dividende WP" als counterparty — Steuerart-Transaktionen (Kapitalertragsteuer etc.) evtl. speziell behandeln
+- [ ] reference-Feld Qualitaet fuer Kontoauszuege systematisch pruefen
+
+---
+
 ## Session – 2026-03-06 (14)
 
 **Beteiligte Agenten:** Explore, General-Purpose (DB-Analyse)
