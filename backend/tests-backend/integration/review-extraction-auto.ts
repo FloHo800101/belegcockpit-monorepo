@@ -158,7 +158,19 @@ function checkDocument(parsed: ParsedData): Finding[] {
     });
   }
 
-  // 11. buyerName equals vendorName
+  // 11. invoiceNumber is null for invoice documents
+  if (
+    !parsed.invoiceNumber &&
+    (parsed.documentType === "invoice" || parsed.sourceType === "invoice")
+  ) {
+    findings.push({
+      rule: "missing_invoice_number",
+      severity: "WARN",
+      detail: "invoiceNumber is null for invoice document",
+    });
+  }
+
+  // 12. buyerName equals vendorName
   if (
     parsed.buyerName &&
     parsed.vendorName &&
