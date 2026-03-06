@@ -126,12 +126,28 @@ Run all commands below from `backend/`.
 
 - `tests-backend/integration/review-extraction-auto.ts`
   Automated plausibility check on `parsed_data` — flags known error patterns (salutation as buyerName,
-  trailing punctuation in vendorName, totalNet > totalGross, vatRate > 1, missing fields, etc.)
+  trailing punctuation in vendorName, totalNet > totalGross, vatRate > 1, missing fields,
+  missing invoiceNumber for invoice documents, etc.)
   without reading PDFs or raw_result. Use as pre-filter before visual review.
   Run with: `deno run -A tests-backend/integration/review-extraction-auto.ts`
 
+- `tests-backend/integration/diagnose-missing-invoice-no.ts`
+  Diagnostic script: finds all invoices with `invoice_no IS NULL` for a tenant and categorizes them
+  as BACKFILL_BUG (parsed_data has invoiceNumber but DB is NULL), MAPPER_BUG (parsed_data also NULL),
+  or NO_EXTRACTION (no extraction exists). Useful for tracking invoice number extraction coverage.
+  Run with: `TENANT_ID=... deno run -A tests-backend/integration/diagnose-missing-invoice-no.ts`
+
+- `tests-backend/integration/analyze-buyer-names.ts`
+  Diagnostic script: analyzes buyer_name quality for a tenant. Loads all invoices, re-runs
+  `cleanPartyName` on parsed_data, and categorizes results into: correct (Florian Hoffmann),
+  garbage (would be filtered by new rules), airline-normalized, NULL, and other.
+  Useful for validating buyer_name extraction coverage and garbage filter effectiveness.
+  Run with: `TENANT_ID=... deno run -A tests-backend/integration/analyze-buyer-names.ts`
+
 - `tests-backend/REVIEW_PROMPT.md`
-  Copy-paste prompt template for running the full review workflow (auto-check + subagent visual review).
+  Quick-start reference for the review workflow. The full 8-phase workflow (Auto-Check -> Visual Review
+  -> Klassifizierung -> Fix -> Tests -> Re-Parse -> Backfill -> Redeploy) with fix-patterns and
+  Azure-limitation reference is in the Claude Code Skill: `.claude/skills/extraction-review.md`.
 
 ## Azure Mapper Architecture
 
@@ -208,13 +224,23 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
     which often swaps day and month for German dates (e.g. 05.06.2025 → 2025-06-05 instead of 2025-05-06).
 - **`party-extraction.ts`** — Vendor/buyer name extraction from OCR text.
   - `BUYER_LABELS` includes hotel-specific labels ("Gastname", "Gast") for guest name extraction.
+  - `isLikelyGarbageName()` — Detects OCR garbage that should never be accepted as a party name:
+    receipt/POS keywords (BARBELEG, ZW-SUMME, PASSEND, etc.), masked card numbers (XXXXX1212),
+    amount strings (16,73 EUR), flight date codes (18JUN23), insurance period refs (DV 01.23),
+    short alphanumeric reference codes (CI4Z9A, DA3CD00400), product-line patterns
+    (455 BLUETOOTH HEADPHONES), instruction text (MIT APP BESTELLEN...), booking reference codes
+    (LHA-P-KIB34-...), generic hotel/station words (HOTELS, HBF), legal text fragments
+    (Verordnung...), and address strings (Postfach).
+  - `normalizeAirlineName()` — Converts airline-style reversed names to normal format:
+    "HOFFMANN / FLORIAN MR" → "Florian Hoffmann". Applied automatically in `cleanPartyName()`.
   - `cleanPartyName()` — Normalizes and validates party name candidates. Rejects single-character
-    values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, invoice numbers,
-    country names (e.g. "DEUTSCHLAND"), and pure legal form strings (e.g. "GmbH & Co. KG" without
-    an actual company name).
+    values (e.g. logo letters like "N" misidentified by Azure DI), metadata lines, address lines,
+    invoice numbers, garbage OCR text, country names (e.g. "DEUTSCHLAND"), and pure legal form
+    strings (e.g. "GmbH & Co. KG" without an actual company name).
     Strips salutation prefixes (Herrn, Herr, Frau, Mr., Mrs., Ms.) from person names.
     Iterates through all lines of multi-line values (e.g. "Herr\nFlorian Hoffmann") instead of
-    only using the first line.
+    only using the first line. Normalizes airline-format names as final step.
+  - `isLikelyAddressOrContactLine()` — Also catches compound street names (e.g. "LINDEMANNSTR.").
   - `looksLikeCompanyLine()` — Rejects strings with high digit-to-letter ratio (e.g. "M22076230495")
     to prevent invoice/customer numbers from being mistaken as company names.
   - `pickPrimaryParty()` — Prefers candidates with business suffixes (GmbH, SE, AG, etc.) over
@@ -222,10 +248,18 @@ The Azure mapping layer is in `supabase/functions/_shared/azure-mappers/` and us
   - `extractLabeledParty()` — Fallback: when a buyer label (e.g. "KUNDE:") has an invalid value
     (only numbers/IDs), checks the preceding line for a valid person/party name.
 - **`installment-plan.ts`** — Tax installment plan and invoice number extraction.
-  - `extractInvoiceNumber()` handles period-abbreviated labels ("Rechnungsnr." with optional `.`),
-    hyphenated variants ("Rechnungs-Nr.", "Beleg-Nr.", "Bon-Nr.").
+  - `extractInvoiceNumber()` searches 30+ German/English labels (Rechnungsnummer, Rechnung #,
+    Buchungscode, Buchungsnummer, Kassenbelegnummer, Auftrags-Nr, Transaktionsnummer, Unser Zeichen,
+    Versicherung Nr, Gebrauchtfahrzeugrechnung, Invoice number, etc.).
+    Uses global regex matching with next-line fallback: when the same-line value after a label is
+    garbage (e.g. "Buchungscode (beim Check-In angeben)"), tries the next OCR line for a valid number.
+    Separator regex allows dots, whitespace, colons, and newlines between label and value
+    (handles OCR patterns like "Rechnungs-Nr .:\n512071761").
+    Additional fallbacks: "Rechnung" + 5+ digits, `#` + 4+ digits (receipt printers),
+    RE/RG/INV prefix patterns.
   - `normalizeInvoiceNumberCandidate()` rejects known label words (RECHNUNGSDATUM, DATUM, SEITE,
-    ZIMMER, etc.) that OCR may capture as invoice number values.
+    ZIMMER, etc.) that OCR may capture as invoice number values. Tax-ID filter only rejects
+    `DE` + 9-11 digits (USt-ID format), not pure-numeric invoice numbers.
 - **`upsert-helpers.ts`** — Shared utility functions used by both the Edge Function
   (`process-document`) and Node.js backfill scripts:
   - `normalizeString()` — Trims whitespace, returns null for empty/non-string values.

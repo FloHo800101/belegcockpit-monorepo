@@ -70,6 +70,8 @@ export function isLikelyAddressOrContactLine(value: string): boolean {
   ) {
     return true;
   }
+  // Compound street names (e.g. "LINDEMANNSTR.", "Hauptstr.")
+  if (/str\.\s/i.test(normalized) || /str\.$/i.test(normalized)) return true;
   if (/\b(iban|bic|ust|steuernummer|vat|seite|page|kundennr|rechnungsnr)\b/.test(normalized)) {
     return true;
   }
@@ -103,6 +105,91 @@ export function looksLikeCompanyLine(value: string): boolean {
   return /^[A-Z0-9&.,'"\- ]{6,}$/.test(normalized);
 }
 
+/**
+ * Detects OCR garbage that should never be accepted as a party name.
+ * Covers receipt keywords, masked card numbers, amounts, date codes,
+ * product-line patterns, and short alphanumeric reference codes.
+ */
+export function isLikelyGarbageName(value: string): boolean {
+  const normalized = normalizeOcrText(value).trim();
+  if (!normalized) return true;
+  const lower = normalized.toLowerCase();
+
+  // Receipt / POS keywords
+  if (
+    /^(barbeleg|bar-?beleg|zw[- ]?summe|zwischensumme|passend|r[uü]ckgeld|wechselgeld|trinkgeld|gesamt|summe|rabatt|netto|brutto|mwst|ust|steuer|gegeben|kartenzahlung|ec[- ]?karte|kreditkarte|visa|mastercard|maestro|girocard|kontaktlos|quittung|kassenbon|beleg|bon|buchung|storno|annulliert|restaurant\s*&?\s*bar)$/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+
+  // Generic hotel/accommodation words (not a buyer name)
+  if (/^(hotels?|suites?\s*hotel)$/i.test(lower)) return true;
+
+  // Train station names (e.g. "HANNOVER HBF")
+  if (/\b(hbf|hauptbahnhof|bahnhof|flughafen|airport)\b/i.test(lower)) return true;
+
+  // Legal/regulatory text fragments
+  if (/\b(verordnung|gesetz|richtlinie|paragraph|regelung)\b/i.test(lower)) return true;
+
+  // Strings containing "Postfach" (mailing address, not a name)
+  if (/\bpostfach\b/i.test(lower)) return true;
+
+  // Masked card numbers (e.g. "XXXXX1212", "****1234")
+  if (/^[X*]{3,}\d{2,}$/i.test(normalized)) return true;
+
+  // Amount strings used as name (e.g. "16,73 EUR", "€ 42.50")
+  if (/^\s*[€$]?\s*\d+[.,]\d{2}\s*(EUR|€|USD|\$)?\s*$/i.test(normalized)) return true;
+
+  // Flight/ticket date codes (e.g. "18JUN23", "29MAY23")
+  if (/^\d{2}[A-Z]{3}\d{2}$/i.test(normalized)) return true;
+
+  // Insurance/period references (e.g. "DV 01.23", "DV 11.22")
+  if (/^DV\s+\d{2}\.\d{2}$/i.test(normalized)) return true;
+
+  // Short alphanumeric reference codes without spaces (e.g. "CI4Z9A", "DA3CD00400")
+  // but not company names — require mix of letters+digits, no spaces, no business suffix
+  if (
+    /^[A-Z0-9]{4,12}$/i.test(normalized) &&
+    /\d/.test(normalized) &&
+    /[A-Za-z]/.test(normalized) &&
+    !/\b(gmbh|ag|kg|ug|ohg|gbr|ltd|llc|inc)\b/i.test(normalized)
+  ) {
+    return true;
+  }
+
+  // Product-line patterns: starts with number + product name (e.g. "455 BLUETOOTH HEADPHONES")
+  if (/^\d{1,4}\s+[A-ZÄÖÜ][A-ZÄÖÜa-zäöü\s]{4,}$/.test(normalized)) return true;
+
+  // Instruction text patterns (e.g. "MIT APP BESTELLEN UND BEZAHLEN")
+  if (/\b(bestellen|bezahlen|scannen|herunterladen|download)\b/i.test(lower) && lower.length > 15) {
+    return true;
+  }
+
+  // Reference numbers with hyphens that look like booking codes (e.g. "LHA-P-KIB34-2023-00003389")
+  if (/^[A-Z]{2,4}-[A-Z0-9-]{8,}$/i.test(normalized)) return true;
+
+  // "FREE NOW ID", "DE-MAIL" and similar service identifiers
+  if (/^(free\s+now\s+id|de[- ]mail)$/i.test(lower)) return true;
+
+  return false;
+}
+
+/**
+ * Normalizes airline-style reversed names back to "Firstname Lastname" format.
+ * E.g. "HOFFMANN / FLORIAN MR" → "Florian Hoffmann"
+ */
+export function normalizeAirlineName(value: string): string {
+  const match = value.match(
+    /^([A-ZÄÖÜ][A-ZÄÖÜa-zäöü]+)\s*\/\s*([A-ZÄÖÜ][A-ZÄÖÜa-zäöü]+)\s*(?:MR|MRS|MS|MISS|DR)?\.?\s*$/i
+  );
+  if (!match) return value;
+  const lastName = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+  const firstName = match[2].charAt(0).toUpperCase() + match[2].slice(1).toLowerCase();
+  return `${firstName} ${lastName}`;
+}
+
 export function cleanPartyName(value: string | null | undefined): string | null {
   if (!value) return null;
   const lines = value.split(/\r?\n/).map((line) => normalizeOcrText(line)).filter(Boolean);
@@ -110,6 +197,7 @@ export function cleanPartyName(value: string | null | undefined): string | null 
 
   for (const line of lines) {
     if (isLikelyMetadataLine(line)) continue;
+    if (isLikelyAddressOrContactLine(line)) continue;
     let candidate = line
       .replace(/^[\s:;,\-]+/, "")
       .replace(
@@ -125,6 +213,8 @@ export function cleanPartyName(value: string | null | undefined): string | null 
     if (!/[A-Za-zÄÖÜäöü]/.test(candidate)) continue;
     // Single characters are never valid party names (e.g. logo letters like "N")
     if (candidate.length < 2) continue;
+    // Reject OCR garbage (receipt keywords, amounts, codes, product names)
+    if (isLikelyGarbageName(candidate)) continue;
     // Fix C: Reject country names used as party names (e.g. buyerName "DEUTSCHLAND")
     if (/^(deutschland|germany|österreich|austria|schweiz|switzerland)$/i.test(candidate)) continue;
     // Fix C: Reject if candidate is ONLY a legal form (e.g. "GmbH & Co. KG")
@@ -133,6 +223,8 @@ export function cleanPartyName(value: string | null | undefined): string | null 
       .replace(/[&.,\-\s]+/g, "")
       .trim();
     if (!withoutLegalForm) continue;
+    // Normalize airline-style reversed names (e.g. "HOFFMANN / FLORIAN MR" → "Florian Hoffmann")
+    candidate = normalizeAirlineName(candidate);
     return candidate;
   }
   return null;

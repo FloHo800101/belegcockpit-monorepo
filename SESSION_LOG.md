@@ -1,3 +1,141 @@
+## Session – 2026-03-06 (14)
+
+**Beteiligte Agenten:** Explore, General-Purpose (DB-Analyse)
+
+### Erledigte Aufgaben
+- **buyer_name Qualitaet analysiert und Parsing verbessert** fuer Tenant a6a3fd7d
+
+#### Analyse: 153 Invoices, 80 mit falschem/fehlendem buyer_name
+- 73 korrekt "Florian Hoffmann", 26 NULL, 34 Garbage-OCR, 3 Airline-Format, 7 korrekte Ausgangsrechnungen, 10 sonstige
+
+#### Fix: isLikelyGarbageName() — neuer Garbage-Filter fuer party-extraction.ts
+- **Kassenbon-Keywords:** BARBELEG, ZW-SUMME, PASSEND, RUECKGELD, KARTENZAHLUNG, EC-KARTE etc.
+- **Maskierte Kartennummern:** XXXXX1212, ****1234
+- **Betraege als Name:** 16,73 EUR, € 42.50
+- **Flug-Datumscodes:** 18JUN23, 29MAY23
+- **Versicherungs-Perioden:** DV 01.23, DV 11.22
+- **Referenz-Codes:** CI4Z9A, DA3CD00400 (kurze alphanumerische Codes ohne Business-Suffix)
+- **Produktzeilen:** 455 BLUETOOTH HEADPHONES (Zahl + Produktname)
+- **Anleitungstext:** MIT APP BESTELLEN UND BEZAHLEN
+- **Buchungs-Referenzen:** LHA-P-KIB34-2023-00003389 (Hyphen-getrennte Codes)
+- **Generische Woerter:** HOTELS, SUITES HOTEL, HBF/Hauptbahnhof/Bahnhof/Flughafen
+- **Rechtliche Texte:** Verordnung, Gesetz, Richtlinie
+- **Adressen:** Postfach, zusammengesetzte Strassennamen (LINDEMANNSTR.)
+- **Service-IDs:** FREE NOW ID, DE-MAIL
+
+#### Fix: normalizeAirlineName() — Airline-Format Normalisierung
+- `HOFFMANN / FLORIAN MR` → `Florian Hoffmann`
+- Pattern: `NACHNAME / VORNAME (MR|MRS|MS|DR)?`
+- Integriert in cleanPartyName() als letzter Schritt
+
+#### Fix: cleanPartyName() — isLikelyAddressOrContactLine eingebaut
+- cleanPartyName() pruefte bisher nur isLikelyMetadataLine, nicht Adresszeilen
+- Jetzt werden auch Adresszeilen (Strasse, PLZ, Email, URLs) vor der Kandidatenauswahl gefiltert
+
+#### Fix: isLikelyAddressOrContactLine() — zusammengesetzte Strassennamen
+- `/str\.\s/i` und `/str\.$/i` fuer zusammengesetzte Namen wie "LINDEMANNSTR." hinzugefuegt
+
+#### Diagnose-Script: analyze-buyer-names.ts
+- Laedt alle Invoices fuer einen Tenant, vergleicht aktuellen buyer_name mit neuem Filter
+- Kategorisiert in: korrekt, garbage, airline, null, sonstige
+
+### Ergebnis: 35 von 80 problematischen buyer_names gefiltert/normalisiert
+
+| Kategorie | Anzahl | Aenderung |
+|-----------|--------|-----------|
+| Garbage → NULL | 35 | Neue Filter greifen |
+| Airline → normalisiert | 3 | HOFFMANN / FLORIAN MR → Florian Hoffmann |
+| Korrekte Ausgangsrechnungen | 7 | AYTU GmbH, SYNAOS GmbH — unveraendert |
+| NULL (Tankbelege etc.) | 26 | Bleiben NULL — kein Buyer auf Kassenbons |
+| Sonstige (Edge Cases) | 9 | CAROLINE, Florian ING DiBa etc. — Einzelfaelle |
+
+### Geaenderte Dateien
+- `backend/supabase/functions/_shared/azure-mappers/party-extraction.ts` — isLikelyGarbageName(), normalizeAirlineName(), cleanPartyName() erweitert, isLikelyAddressOrContactLine() verbessert
+- `backend/tests-backend/integration/analyze-buyer-names.ts` — NEU: Diagnose-Script
+- `backend/tests-backend/README.md` — Doku-Updates
+
+### Entscheidungen & Begruendungen
+- Keine generische Single-Word-Heuristik: Wuerde auch echte Vendor-Namen (ALDI, REWE) filtern, da cleanPartyName fuer Buyer und Vendor verwendet wird
+- CAROLINE nicht gefiltert: Ist auch ein valider Personenname, Hotelname als Buyer ist ein Azure-DI-Problem (CustomerName falsch gesetzt)
+- Florian ING DiBa nicht gefiltert: Teilweise korrekter Name, Azure OCR merged Namen mit Banknamen — braeuchte spezifischen Fix fuer Eurowings-Rechnungen
+
+### Tests
+- Alle 6 bestehenden vitest-Tests bestanden (vendor-name, receipt-multi, bank-fx, date-fallback, storage-path, upload)
+- azure-invoice-hotel.test.ts hat leere Test-Suite (vorbestehendes Problem)
+
+### Offene Punkte / Naechste Schritte
+- [ ] Re-Parse + Backfill fuer Tenant a6a3fd7d (damit DB-Werte aktualisiert werden)
+- [ ] Edge Function redeployen (damit neue Dokumente profitieren)
+- [ ] Unit-Tests fuer isLikelyGarbageName() und normalizeAirlineName() schreiben
+- [ ] "Florian ING DiBa" Edge Case analysieren (Eurowings OCR-Qualitaet)
+
+---
+
+## Session – 2026-03-06 (13)
+
+**Beteiligte Agenten:** Explore (6x parallel, Batches a 5-8 Dokumente visuell pruefen)
+
+### Erledigte Aufgaben
+- **Fehlende invoice_no analysieren und fixen** fuer Tenant a6a3fd7d (56 → 17 NULL, 70% Reduktion)
+- Diagnose-Script erstellt, visuelle Pruefung aller 56 Dokumente, Mapper gefixt, Re-Parse + Backfill
+
+#### Bugfix: PostgREST URL-Laenge (azure-mappers-cases.ts + backfill-extractions)
+- `.in("storage_path", group)` mit 200 langen Pfaden ueberschreitet URL-Limit → `Bad Request`
+- Fix: Chunk-Size von 200 auf 30 fuer storage_path Queries, Empty-Array Guards
+
+#### Fix: extractInvoiceNumber() — 15 neue Labels + bessere OCR-Erkennung
+- **Neue Labels:** Rechnung #, Buchungscode, Buchungsnummer, Rechnungs Nr, Auftrags-Nr, Auftrags Nr,
+  Beleg Nr, Belegnummer, Bonnummer, Reservierungscode, Reservation code, Transaktionsnummer,
+  Kassenbelegnummer, Vorgangsnummer, Unser Zeichen, Versicherung Nr, Gebrauchtfahrzeugrechnung
+- **Separator-Regex:** `[.\s]*[:#\-]?[.\s]*` statt `\.?\s*[:#\-]?\s*` — erlaubt OCR-Muster wie `Rechnungs-Nr .:\n512071761`
+- **Global Match + Next-Line:** Wenn Label-Wert auf gleicher Zeile Muell ist (z.B. "Buchungscode (beim Check-In angeben)"),
+  wird die naechste Zeile geprueft
+- **"Rechnung + Zahl" Fallback:** `\bRechnung\s+(\d{5,})\b` fuer `Rechnung 67198934` Pattern
+- **"#Nummer" Fallback:** `#\d{4,}` fuer Kassenbon-Nummern wie `#117938`
+
+#### Fix: normalizeInvoiceNumberCandidate() — Tax-ID-Filter praezisiert
+- `^(DE)?\d{9,}$` → `^DE\d{9,11}$` — nur echte USt-IDs filtern, nicht rein-numerische Rechnungsnummern
+- Behebt: Audi 512071761, Autohaus 2023109393, DEVK 868172681 u.a.
+
+#### Neue Auto-Review-Regel: missing_invoice_number
+- `review-extraction-auto.ts`: Warnung wenn invoiceNumber NULL bei documentType=invoice
+
+### Ergebnis: 39 von 56 Dokumenten gefixt
+
+| Kategorie | Beispiele |
+|-----------|-----------|
+| Gefixt durch neue Labels | Hotels (Rechnung #), Eurowings (Buchungscode), Booking.com (Buchungsnummer), MediaMarkt (Kassenbelegnummer) |
+| Gefixt durch Separator-Regex | Autohaus (Rechnungs-Nr .:\n...), PKW Reparatur (Auftrags-Nr .:\n...) |
+| Gefixt durch Fallbacks | Hotels (Rechnung 67198934), Autowaesche (#117938), DEVK (Versicherung Nr) |
+| Gefixt durch Tax-ID-Filter | Audi (512071761), Autohaus (2023109393) |
+| Legitim NULL (17 verbleibend) | Taxiquittungen, Tankbelege, Bewirtungsbelege ohne Nr., WEMAG |
+
+### Geaenderte Dateien
+- `backend/supabase/functions/_shared/azure-mappers/installment-plan.ts` – extractInvoiceNumber() und normalizeInvoiceNumberCandidate()
+- `backend/tests-backend/integration/review-extraction-auto.ts` – Neue Regel missing_invoice_number
+- `backend/tests-backend/integration/diagnose-missing-invoice-no.ts` – NEU: Diagnose-Script
+- `backend/tests-backend/integration/azure-mappers-cases.ts` – Chunk-Size Fix + Empty-Guard
+- `backend/tests-backend/integration/backfill-extractions-from-analyze.ts` – Chunk-Size Fix + Empty-Guard
+- `backend/tests-backend/README.md` – Doku-Updates
+
+### Entscheidungen & Begruendungen
+- Chunk-Size 30 statt 200 fuer storage_path: Pfade sind ~100+ Zeichen, 200 sprengt PostgREST URL-Limit
+- Tax-ID-Filter nur `^DE\d{9,11}$`: Deutsche USt-IDs haben exakt dieses Format, reine Zahlen sind oft Rechnungsnummern
+- Global Match statt First Match: Viele Labels erscheinen mehrfach im OCR-Text, erste Vorkommen sind oft in Fliesstext
+- Next-Line Fallback: Azure OCR setzt Label und Wert oft auf separate Zeilen
+
+### Tests
+- Alle 76 bestehenden Tests bestanden (18 hotel + 13 vendor + 26 receipt + 11 bank + 8 amount)
+
+### Offene Punkte / Naechste Schritte
+- [x] Re-Parse fuer Tenant a6a3fd7d (erledigt in dieser Session)
+- [x] Backfill-Extractions + Backfill-Invoices fuer den Tenant (erledigt)
+- [ ] Edge Function redeployen (damit neue Dokumente auch profitieren)
+- [ ] `tests-backend/output/` leeren nach Review-Abschluss
+- [ ] Unit-Tests fuer neue extractInvoiceNumber-Patterns schreiben
+
+---
+
 ## Session – 2026-03-05 (12)
 
 **Beteiligte Agenten:** Explore (40x parallel, 5 pro Batch, je 4 Dokumente visuell pruefen)

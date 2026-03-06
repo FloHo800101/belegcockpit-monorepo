@@ -82,6 +82,7 @@ async function loadDocumentsById(
   documentIds: string[]
 ) {
   const map = new Map<string, DocumentRow>();
+  if (!documentIds.length) return map;
   for (const group of chunk(documentIds, 200)) {
     const { data, error } = await (supabase.from(DOCUMENTS_TABLE) as any)
       .select("id, storage_path, tenant_id, created_at")
@@ -97,7 +98,8 @@ async function loadDocumentsByPath(
   storagePaths: string[]
 ) {
   const map = new Map<string, DocumentRow>();
-  for (const group of chunk(storagePaths, 200)) {
+  if (!storagePaths.length) return map;
+  for (const group of chunk(storagePaths, 30)) {
     const { data, error } = await (supabase.from(DOCUMENTS_TABLE) as any)
       .select("id, storage_path, tenant_id, created_at")
       .in("storage_path", group);

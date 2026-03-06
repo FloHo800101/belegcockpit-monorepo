@@ -66,14 +66,31 @@ export function extractInvoiceNumber(content: string | null | undefined): string
   const labels = [
     "Rechnungsnummer",
     "Rechnung Nr",
+    "Rechnung #",
     "Rechnungs-Nr",
+    "Rechnungs Nr",
     "Rechnungsnr",
     "Re-Nr",
     "Beleg-Nr",
+    "Beleg Nr",
     "Belegnr",
+    "Belegnummer",
     "Bon-Nr",
+    "Bonnummer",
+    "Buchungscode",
+    "Buchungsnummer",
+    "Reservierungscode",
+    "Reservation code",
     "Auftragsnummer",
+    "Auftrags-Nr",
+    "Auftrags Nr",
     "Bestellnummer",
+    "Transaktionsnummer",
+    "Kassenbelegnummer",
+    "Vorgangsnummer",
+    "Unser Zeichen",
+    "Versicherung Nr",
+    "Gebrauchtfahrzeugrechnung",
     "Invoice number",
     "Invoice no",
     "Invoice #",
@@ -82,9 +99,35 @@ export function extractInvoiceNumber(content: string | null | undefined): string
 
   for (const label of labels) {
     const escapedLabel = escapeRegex(label).replace(/\s+/g, "\\s+");
-    const regex = new RegExp(`${escapedLabel}\\.?\\s*[:#\\-]?\\s*([^\\r\\n]+)`, "i");
-    const match = normalizedContent.match(regex);
-    const candidate = normalizeInvoiceNumberCandidate(match?.[1] ?? null);
+    // Allow separators like " .:", ": ", " :\n" between label and value
+    const regex = new RegExp(`${escapedLabel}[.\\s]*[:#\\-]?[.\\s]*([^\\r\\n]+)`, "i");
+    // Try all occurrences of this label (global match)
+    const globalRegex = new RegExp(regex.source, "gi");
+    let match: RegExpExecArray | null;
+    while ((match = globalRegex.exec(normalizedContent)) !== null) {
+      const candidate = normalizeInvoiceNumberCandidate(match[1] ?? null);
+      if (candidate) return candidate;
+      // If same-line value was garbage, try the next line after the match
+      const afterMatch = normalizedContent.slice(match.index + match[0].length);
+      const nextLine = afterMatch.match(/^\s*\n([^\r\n]+)/);
+      if (nextLine) {
+        const nextCandidate = normalizeInvoiceNumberCandidate(nextLine[1] ?? null);
+        if (nextCandidate) return nextCandidate;
+      }
+    }
+  }
+
+  // Fallback: "Rechnung 67198934" pattern (standalone "Rechnung" + number)
+  const rechnungMatch = normalizedContent.match(/\bRechnung\s+(\d{5,}[A-Z0-9/_-]*)\b/i);
+  if (rechnungMatch) {
+    const candidate = normalizeInvoiceNumberCandidate(rechnungMatch[1]);
+    if (candidate) return candidate;
+  }
+
+  // Fallback: "#117938" pattern (hash + digits, common on receipt printers)
+  const hashMatch = normalizedContent.match(/(?:^|\n)\s*#(\d{4,})\b/);
+  if (hashMatch) {
+    const candidate = normalizeInvoiceNumberCandidate(hashMatch[1]);
     if (candidate) return candidate;
   }
 
@@ -103,7 +146,7 @@ export function normalizeInvoiceNumberCandidate(value: string | null | undefined
   if (/^UST/i.test(token)) return null;
   if (/^(UID|VAT|TAX)$/i.test(token)) return null;
   if (/^[A-Z]{1,4}$/.test(token)) return null;
-  if (/^(DE)?\d{9,}$/.test(token)) return null;
+  if (/^DE\d{9,11}$/.test(token)) return null;
   // Reject known label words that OCR may capture as invoice number values
   if (/^(RECHNUNGSDATUM|RECHNUNGSNUMMER|DATUM|SEITE|ZIMMER|ANREISE|ABREISE|TOTAL|SUMME|NETTO|BRUTTO|BESCHREIBUNG|EINZELPREIS|NETTOBETRAG|STEUERSATZ|MEHRWERTSTEUER)$/i.test(token)) return null;
   return token;
