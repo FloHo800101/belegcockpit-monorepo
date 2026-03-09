@@ -166,6 +166,46 @@ Frontend: zeigt echte Transaktionen + Cluster ✅
 
 ---
 
+## Qualitäts- & Vollständigkeitsanalyse (zu prüfende Punkte)
+
+> Ergebnis der Analyse vom 2026-02-25: Abgleich Engine-Abdeckung vs. deutsches Steuerrecht + UX-Review.
+> Status: **zu prüfen / einzuplanen** – noch keine Entscheidung getroffen.
+> Backend/Engine-Punkte: Abstimmung mit TilovD erforderlich.
+> Frontend/UX-Punkte: können unabhängig umgesetzt werden.
+
+### Gesamtübersicht
+
+| # | Thema | Beschreibung | Bereich | Empfehlung |
+|---|---|---|---|---|
+| 1 | **Steuerzahlungen erkennen** | USt-Vorauszahlung, ESt-Vorauszahlung, Gewerbesteuer ans Finanzamt werden heute als `missing_receipt` geflasst. Keyword-Erkennung ("Umsatzsteuer", "Finanzamt", "Steuervorauszahlung") + eigene Kategorie ohne Receipt-Pflicht. | Backend (Engine) + Frontend (UI-Kategorie) | Phase 1 |
+| 2 | **Umbuchungen eigene Konten** | Transfers zwischen eigenen Geschäftskonten erzeugen falsche `missing_receipt`-Alarme. Keyword-Erkennung ("Umbuchung", "eigenes Konto") + automatische Kategorisierung. | Backend (Engine) | Phase 1 |
+| 3 | **Skonto-Toleranz** | 2% Skonto (§ 17 UStG) auf große Beträge fällt durch aktuelle Toleranz (0,02 € / 0,1%). Toleranz auf ~3% anheben oder separate Skonto-Kategorie. Steuerlich: USt-Korrektur auf Bemessungsgrundlage. | Backend (Engine) | Phase 1 |
+| 4 | **Rücklastschriften** | Zurückgebuchte Lastschriften erzeugen 2 Buchungen (Belastung + Rückbuchung). Heute beide als separate `missing_receipt`. Erkennung durch gegenläufige Beträge + Zeitfenster. | Backend (Engine) | Phase 1 |
+| 5 | **Kleinunternehmer-Lieferanten §19 UStG** | Rechnungen ohne MwSt-Ausweis: Engine könnte Betragsabweichung signalisieren wenn sie Brutto/Netto vergleicht. Prüfen ob in der Praxis ein Problem entsteht. | Backend (Engine) | Phase 1 (prüfen) |
+| 6 | **Re-Upload-Verhalten** | Was passiert mit manuell bestätigten Matches (`mandant_resolution`) wenn derselbe Monat erneut verarbeitet wird? Aktuell undefiniert. Regel definieren: mandant_resolution persistieren, match_edges neu berechnen. | Backend (Engine) + Frontend (UI-Flow) | Phase 1 |
+| 7 | **Bewirtungsbelege §4 Abs. 5 Nr. 2 EStG** | Nur 70% abziehbar; Pflichtfelder fehlen oft im PDF (Anlass, Teilnehmer, Ort). Engine muss Restaurant-Kategorie erkennen, UI muss Pflichtfelder abfragen. Bereits als Phase 1 geplant. | Backend (Engine) + Frontend (UI) | Phase 1 |
+| 8 | **Fahrzeugkosten / private Nutzung §6 Abs. 1 Nr. 4 EStG** | Tankstellen, KFZ-Reparaturen: Privatanteil muss herausgerechnet werden (1%-Methode oder Fahrtenbuch). Engine erkennt Tankstelle bereits – keine Aufteilung. UI müsste Privatanteil abfragen. | Backend (Engine) + Frontend (UI) | Phase 2 |
+| 9 | **Barausgaben / Kassenbuch** | Engine matcht nur `bank_transactions ↔ documents`. Barausgaben (kein Bankbeleg, z.B. Baumaterial bar bezahlt) sind konzeptuell nicht modelliert. Scope-Entscheidung: Kassenbuch integrieren oder explizit ausschließen. | Backend (Modell-Entscheidung) + Frontend (UI) | Phase 2 (Scope-Entscheidung) |
+| 10 | **AR-Matching (Ausgangsrechnungen)** | Kundenzahlungen (eingehende Überweisungen) vs. selbst erstellte Ausgangsrechnungen werden nicht gematcht. Für Freiberufler/Handwerker mit eigenem Rechnungswesen kritisch. Scope-Entscheidung. | Backend (Engine) + Frontend (UI) | Phase 2 (Scope-Entscheidung) |
+| 11 | **Gutschrift §14 Abs. 2 UStG (Abrechnungsgutschrift)** | Auftraggeber stellt Rechnung aus (z.B. Plattformen, Verlage). Kein Matching-Problem, aber Label/Kategorie fehlt zur korrekten Zuordnung. | Backend (Engine) | Phase 2 |
+| 12 | **CLUSTER_NN_WIZARD in UI abbilden** | `many_to_many + ambiguous`-Decisions (Periodenabgrenzung) haben keine dedizierte UI-Ansicht. Nutzer sehen diese nicht, können sie nicht auflösen. Eigene Ansicht "Komplexe Fälle" mit "An Kanzlei" als einziger Handlungsoption. | Frontend (UI) | Phase 1 |
+| 13 | **Konfidenz-% durch Klartext ersetzen** | "87%" in UncertainMatches ist für Nicht-Experten bedeutungslos. Ersetzen durch verständliche Labels: "Betrag stimmt, Datum weicht 3 Tage ab" oder "Wahrscheinlich" / "Bitte prüfen". | Frontend (UI) | Phase 1 |
+| 14 | **Erklärung "warum offen" pro Transaktion** | In OpenItems: Kurzer Hinweistext warum eine Tx offen ist ("Kein passender Beleg gefunden", "Betrag stimmt nicht überein"). Derzeit keine Erklärung sichtbar. | Frontend (UI) | Phase 1 |
+| 15 | **Wizard: Hinweis auf offene Punkte vor "Weiter"** | Nutzer können Wizard abschließen ohne alle offenen Punkte geklärt zu haben. Sanfter Hinweis bei verbleibendem `gesamtCount > 0`: "Du hast noch X ungeklärte Positionen – trotzdem weiter?" | Frontend (UI) | Phase 1 |
+
+### Zusammenfassung nach Bereich
+
+**Backend (Engine) – Abstimmung mit TilovD erforderlich**
+→ Punkte: #1 (anteilig), #2, #3, #4, #5, #6 (anteilig), #7 (anteilig), #8, #9, #10, #11
+
+**Frontend (UI/UX) – unabhängig umsetzbar**
+→ Punkte: #12, #13, #14, #15
+
+**Beide Bereiche betreffen**
+→ Punkte: #1, #6, #7, #8, #9, #10
+
+---
+
 ## Steuerlich relevante Sonderfälle
 
 ### Phase 0 – Explizit ausgeschlossen
