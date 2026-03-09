@@ -219,17 +219,17 @@ export async function loadMonthData(
   // 2. Match-Edges: Transaktion → match_group_id
   const { data: txEdges } = await supabase
     .from('match_edges_txs')
-    .select('tx_id, match_group_id')
+    .select('bank_transaction_id, match_group_id')
     .eq('tenant_id', tenantId)
-    .in('tx_id', txIds);
+    .in('bank_transaction_id', txIds);
 
   const groupIds = [...new Set((txEdges ?? []).map((e: any) => e.match_group_id))];
 
-  // 3 + 4. Match-Edges: match_group_id → doc_id + Konfidenz
+  // 3 + 4. Match-Edges: match_group_id → document_id + Konfidenz
   const { data: docEdges } = groupIds.length
     ? await supabase
         .from('match_edges_docs')
-        .select('match_group_id, doc_id')
+        .select('match_group_id, document_id')
         .eq('tenant_id', tenantId)
         .in('match_group_id', groupIds)
     : { data: [] };
@@ -244,12 +244,12 @@ export async function loadMonthData(
 
   // Lookup-Maps aufbauen
   const txToGroup = new Map<string, string>();
-  for (const e of txEdges ?? []) txToGroup.set(e.tx_id, e.match_group_id);
+  for (const e of txEdges ?? []) txToGroup.set(e.bank_transaction_id, e.match_group_id);
 
   const groupToDocs = new Map<string, string[]>();
   for (const e of docEdges ?? []) {
     const arr = groupToDocs.get(e.match_group_id) ?? [];
-    arr.push(e.doc_id);
+    arr.push(e.document_id);
     groupToDocs.set(e.match_group_id, arr);
   }
 
@@ -257,7 +257,7 @@ export async function loadMonthData(
   for (const g of groups ?? []) groupConfidence.set(g.id, g.confidence ?? 0);
 
   // 5. Invoices für verknüpfte Dokumente
-  const docIds = [...new Set((docEdges ?? []).map((e: any) => e.doc_id))];
+  const docIds = [...new Set((docEdges ?? []).map((e: any) => e.document_id))];
   const { data: invoiceRows } = docIds.length
     ? await supabase
         .from('invoices')

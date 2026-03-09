@@ -7,6 +7,8 @@ import {
   toApplyOps,
   toAuditRecord,
 } from "../_shared/matching-engine/persistence.ts";
+import { normalizeTx } from "../_shared/matching-engine/normalization.ts";
+import { normalizeVendor } from "../_shared/matching-engine/normalize.ts";
 import type {
   Doc,
   MatchDecision,
@@ -80,7 +82,7 @@ serve(async (req) => {
       .from("invoices")
       .select(`
         id, tenant_id, amount, currency, invoice_date, due_date,
-        invoice_no, iban, e2e_id, vendor_name, open_amount, link_state,
+        invoice_no, iban, e2e_id, vendor_name, buyer_name, open_amount, link_state,
         documents!inner(link_state, document_type)
       `)
       .eq("tenant_id", tenantId)
@@ -212,13 +214,29 @@ class SupabaseMatchRepository implements MatchRepository {
     }
 
     if (op.kind === "upsert_edge") {
-      // Nur mit match_group_id; sonst keine Edge-Records (1:1 ohne Gruppe)
-      if (!op.match_group_id) return;
+      // Generiere match_group_id falls nicht vorhanden (z.B. one_to_one aus Prepass)
+      const groupId = op.match_group_id ?? crypto.randomUUID();
+      await this.supabase.from("match_groups").upsert(
+        {
+          id: groupId,
+          tenant_id: op.tenant_id,
+          relation_type: op.relation_type,
+          state: op.match_state,
+          confidence: op.confidence,
+          match_reason: op.reason_codes.join(","),
+          matched_by: "system",
+          matched_at: this.nowISO,
+          run_id: this.runId,
+          created_at: op.created_at,
+          updated_at: this.nowISO,
+        },
+        { onConflict: "id" }
+      );
 
       await this.supabase.from("match_edges_docs").upsert(
         {
           tenant_id: op.tenant_id,
-          match_group_id: op.match_group_id,
+          match_group_id: groupId,
           document_id: op.doc_id,
           run_id: this.runId,
           created_at: op.created_at,
@@ -229,7 +247,7 @@ class SupabaseMatchRepository implements MatchRepository {
       await this.supabase.from("match_edges_txs").upsert(
         {
           tenant_id: op.tenant_id,
-          match_group_id: op.match_group_id,
+          match_group_id: groupId,
           bank_transaction_id: op.tx_id,
           run_id: this.runId,
           created_at: op.created_at,
@@ -309,7 +327,7 @@ function rowToTx(row: Record<string, unknown>): Tx {
   const amount = Math.abs(raw);
   const direction = raw >= 0 ? "in" : "out";
 
-  return {
+  const base: Tx = {
     id: String(row.id),
     tenant_id: String(row.tenant_id),
     amount,
@@ -326,9 +344,20 @@ function rowToTx(row: Record<string, unknown>): Tx {
     private_hint: row.private_hint != null ? Boolean(row.private_hint) : null,
     is_recurring_hint: row.is_recurring_hint != null ? Boolean(row.is_recurring_hint) : null,
   };
+
+  // Normalize so that vendor_norm / text_norm are available for matching logic.
+  const normalized = normalizeTx(base);
+  // vendor_norm is used by prepass/candidates but normalizeTx only sets vendorKey.
+  // Bridge the gap so both field names are populated.
+  if (!normalized.vendor_norm && normalized.vendorKey) {
+    (normalized as Tx).vendor_norm = normalized.vendorKey;
+  }
+  return normalized;
 }
 
 function rowToDoc(row: Record<string, unknown>): Doc {
+  const vendorRaw = row.vendor_name ? String(row.vendor_name) : null;
+  const buyerRaw = row.buyer_name ? String(row.buyer_name) : null;
   return {
     id: String(row.id),
     tenant_id: String(row.tenant_id),
@@ -340,7 +369,9 @@ function rowToDoc(row: Record<string, unknown>): Doc {
     iban: row.iban ? String(row.iban) : null,
     invoice_no: row.invoice_no ? String(row.invoice_no) : null,
     e2e_id: row.e2e_id ? String(row.e2e_id) : null,
-    vendor_raw: row.vendor_name ? String(row.vendor_name) : null,
+    vendor_raw: vendorRaw,
+    vendor_norm: vendorRaw ? normalizeVendor(vendorRaw) : null,
+    buyer_norm: buyerRaw ? normalizeVendor(buyerRaw) : null,
     open_amount: row.open_amount != null ? Number(row.open_amount) : null,
   };
 }
