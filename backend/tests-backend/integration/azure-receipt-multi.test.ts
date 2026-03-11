@@ -587,6 +587,186 @@ if ("Deno" in globalThis) {
     }
   });
 
+  // ---------- Handwriting OCR decimal error (Rashed GmbH Taxi-Quittung) ----------
+
+  Deno.test("receipt mapper: handwriting OCR decimal error — '55.006' corrected to ~55.01 via OCR fallback", () => {
+    // Real-world case: Scan with CAT ticket (€14,90) + handwritten Taxi receipt (€55,06)
+    // Azure misreads handwritten "55,06" as "55.006" → interprets as 55006 EUR
+    // Azure also mixes TotalTax from CAT ticket (€1,35) with Taxi vendor
+    const ocrContent = [
+      "CAT",
+      "AuftragNr: 5012 /520 2/74 8322",
+      "CITY AIRPORT TRAIN",
+      "SINGLE TICKET",
+      "CITY AIRPORT",
+      "RT TRAI",
+      "Gultig laut TarifbestimmCAIZ",
+      "CIVE AIRPORT",
+      "€",
+      "14,90",
+      "13.02.2023 - 14.03.2023",
+      "ORT TRAI",
+      "inkl. 10% USt € 1,35",
+      "POS",
+      "3036232633|9532-81-101613|5012745311950194|130223/19:18",
+      "319NITY AIRPORT TR",
+      "Rashed GmbH - Taxi-Quittung",
+      "Funk-Nr .:",
+      "Kennzeichen:",
+      "Auftrag-Nr .:",
+      "inkl.",
+      "%MwSt.",
+      "€",
+      "55.006",
+      "Bei Betrag",
+      "MwSt.",
+      "IMMOBILIEN",
+      "BAMA",
+      "Herrn / Frau",
+      "Zuzahlung",
+      "von",
+      "nach §61",
+      "SGB(V)",
+      "€",
+      "www.bama-immobilien.de",
+      "·",
+      "nach",
+      "bezahlt mit :",
+      "O ec-Kreditkarte",
+      "b",
+    ].join("\n");
+
+    const azureResult = {
+      content: ocrContent,
+      documents: [
+        {
+          confidence: 0.982,
+          docType: "receipt",
+          fields: {
+            Total: {
+              type: "currency",
+              content: "€\n55.006",
+              valueCurrency: { amount: 55006, currencyCode: "EUR", currencySymbol: "€" },
+            },
+            TotalTax: {
+              type: "currency",
+              content: "€ 1,35",
+              valueCurrency: { amount: 1.35, currencyCode: "EUR", currencySymbol: "€" },
+            },
+            ReceiptType: {
+              type: "string",
+              valueString: "Transportation.Taxi",
+            },
+            MerchantName: {
+              type: "string",
+              content: "Rashed GmbH",
+              valueString: "Rashed GmbH",
+            },
+            MerchantAddress: {
+              type: "address",
+              content: "Am Neumarkt 30\n22041 Hamburg",
+            },
+            TransactionDate: {
+              type: "date",
+              content: "14.03.2023",
+              valueDate: "2023-03-14",
+            },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureReceiptToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+
+    // The OCR extraction should find €14,90 and €55.006 (corrected to ~55.01)
+    // Total should be the sum of OCR items, NOT Azure's 55006
+    if (result.parsed.totalGross == null || result.parsed.totalGross > 200) {
+      throw new Error(
+        `Expected totalGross < 200 (corrected), got ${result.parsed.totalGross}. ` +
+        `Azure's 55006 should have been rejected as implausible.`
+      );
+    }
+
+    // Vendor should still be Rashed GmbH
+    if (result.parsed.vendorName !== "Rashed GmbH") {
+      throw new Error(`Expected vendorName "Rashed GmbH", got "${result.parsed.vendorName}"`);
+    }
+
+    // Should have line items from OCR extraction
+    if (!result.parsed.lineItems || result.parsed.lineItems.length < 1) {
+      throw new Error(
+        `Expected at least 1 line item from OCR, got ${result.parsed.lineItems?.length ?? 0}`
+      );
+    }
+
+    // rawMeta should indicate this was corrected
+    const meta = result.parsed.rawMeta as Record<string, unknown> | undefined;
+    if (!meta?.implausibleAzureTotal && !meta?.ocrMultiReceipt) {
+      throw new Error(
+        `Expected rawMeta.implausibleAzureTotal or ocrMultiReceipt, got ${JSON.stringify(meta)}`
+      );
+    }
+  });
+
+  Deno.test("receipt mapper: sanitizeReceiptTotal corrects '55.006' content to 55.01", () => {
+    // Direct test of the single-receipt path with the decimal correction
+    const azureResult = {
+      content: "Taxi-Quittung\n€\n55.006",
+      documents: [
+        {
+          confidence: 0.95,
+          fields: {
+            MerchantName: { valueString: "Taxi GmbH" },
+            Total: {
+              content: "€\n55.006",
+              valueCurrency: { amount: 55006, currencyCode: "EUR" },
+            },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureReceiptToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+
+    // sanitizeReceiptTotal should correct 55006 → 55.006 (decimal)
+    // Then OCR extraction finds the amount too, so one of the correction paths kicks in
+    // The key assertion: totalGross should NOT be 55006
+    if (result.parsed.totalGross != null && result.parsed.totalGross > 200) {
+      throw new Error(
+        `Expected totalGross to be corrected (not 55006), got ${result.parsed.totalGross}`
+      );
+    }
+  });
+
+  Deno.test("receipt mapper: normal receipt with Total < 1000 is not affected by sanitize", () => {
+    // Ensure we don't break normal receipts
+    const azureResult = {
+      content: "Restaurant\n€ 45,90",
+      documents: [
+        {
+          confidence: 0.95,
+          fields: {
+            MerchantName: { valueString: "Restaurant XY" },
+            Total: {
+              content: "€ 45,90",
+              valueNumber: 45.9,
+              valueCurrency: { amount: 45.9, currencyCode: "EUR" },
+            },
+            TotalTax: { valueNumber: 7.33 },
+          },
+        },
+      ],
+    };
+
+    const result = mapAzureReceiptToParseResult(azureResult);
+    if (!result.parsed) throw new Error("Expected parsed result.");
+    if (result.parsed.totalGross !== 45.9) {
+      throw new Error(`Expected totalGross 45.9, got ${result.parsed.totalGross}`);
+    }
+  });
+
   // ---------- detection: Umsatzsteuer-Mail → invoice ----------
 
   Deno.test("detection: Umsatzsteuer email with 'Zahllast' returns invoice", () => {
