@@ -2,7 +2,7 @@
 // Supports multi-receipt pages (e.g. travel expense scans with multiple tickets)
 
 import { AzureParseResult, ParsedDocument, ParsedLineItem } from "../types.ts";
-import { AzureAnalyzeResult, AzureDocument, getValue, getNumber, resolvePreferredDate } from "./azure-field-helpers.ts";
+import { AzureAnalyzeResult, AzureDocument, AzureField, getValue, getNumber, resolvePreferredDate } from "./azure-field-helpers.ts";
 import { extractCurrency, parseAmountFlexible, parseDateFlexible, normalizeOcrText, roundCurrency } from "./parse-utils.ts";
 import { extractInvoiceNumber } from "./installment-plan.ts";
 import { cleanPartyName } from "./party-extraction.ts";
@@ -10,6 +10,7 @@ import { cleanPartyName } from "./party-extraction.ts";
 /**
  * Extract receipt amounts and context from OCR text.
  * Scans for patterns like "€ 2,40" or "EUR 12,00" with surrounding context.
+ * Also handles multi-line patterns where "€" is on one line and the amount on the next.
  */
 function extractReceiptItemsFromOcr(
   content: string
@@ -19,7 +20,7 @@ function extractReceiptItemsFromOcr(
   const seenPositions = new Set<number>();
 
   // Match "€ X,XX" or "EUR X,XX" patterns – capture amount with context
-  const amountPattern = /(?:€|EUR)\s?(\d+[.,]\d{2})/gi;
+  const amountPattern = /(?:€|EUR)\s?(\d+[.,]\d{2,3})/gi;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -27,7 +28,7 @@ function extractReceiptItemsFromOcr(
     amountPattern.lastIndex = 0;
 
     while ((match = amountPattern.exec(line)) !== null) {
-      const amount = parseAmountFlexible(match[1]);
+      const amount = parseReceiptOcrAmount(match[1]);
       if (amount == null || amount <= 0) continue;
 
       // Avoid counting the same line position twice when patterns overlap
@@ -78,10 +79,76 @@ function extractReceiptItemsFromOcr(
         vatRate: null,
       });
     }
+
+    // Multi-line pattern: line ends with "€" (possibly with spaces) and the next line has the amount
+    if (i < lines.length - 1 && /€\s*$/i.test(line.trim())) {
+      const nextLine = lines[i + 1].trim();
+      const multiLineMatch = nextLine.match(/^(\d+[.,]\d{2,3})\b/);
+      if (multiLineMatch) {
+        const posKey = (i + 1) * 10000;
+        if (!seenPositions.has(posKey)) {
+          seenPositions.add(posKey);
+          const amount = parseReceiptOcrAmount(multiLineMatch[1]);
+          if (amount != null && amount > 0) {
+            const contextLines: string[] = [];
+            for (let j = Math.max(0, i - 3); j <= i; j++) {
+              const cl = normalizeOcrText(lines[j]);
+              if (cl.length > 2 && cl.length < 120) contextLines.push(cl);
+            }
+            const description = contextLines.join(" | ").slice(0, 200);
+
+            items.push({
+              description: description || `Receipt item (€${amount.toFixed(2)})`,
+              quantity: 1,
+              unitPrice: amount,
+              totalPrice: amount,
+              vatRate: null,
+            });
+          }
+        }
+      }
+    }
   }
 
   const total = roundCurrency(items.reduce((sum, item) => sum + (item.totalPrice ?? 0), 0));
   return { items, total };
+}
+
+/**
+ * Parse an OCR amount string from a receipt, handling German thousands separators
+ * that are actually misread decimal separators from handwriting.
+ *
+ * Pattern: "55.006" — Azure reads handwritten "55,06" as "55.006"
+ * and interprets the dot as a German thousands separator → 55006.
+ * We detect this pattern (dot + exactly 3 digits, no further decimals)
+ * and try to interpret it as a decimal if the resulting amount is implausibly large.
+ *
+ * Heuristic: if the number has format X.XXX (dot + 3 digits) and interpreting
+ * as thousands gives > 1000, but interpreting the dot as decimal gives a
+ * reasonable receipt amount, prefer the decimal interpretation.
+ */
+function parseReceiptOcrAmount(value: string): number | null {
+  if (!value) return null;
+  const cleaned = value.trim().replace(/\s/g, "");
+
+  // Check for the ambiguous "X.XXX" pattern (dot + exactly 3 digits, no comma)
+  const germanThousandsPattern = /^(\d+)\.(\d{3})$/;
+  const match = cleaned.match(germanThousandsPattern);
+  if (match) {
+    const asThousands = parseInt(match[1] + match[2], 10); // e.g. 55006
+    const asFractional = parseFloat(`${match[1]}.${match[2]}`); // e.g. 55.006
+
+    // If the thousands interpretation gives an implausibly large receipt amount
+    // (> 1000 EUR) and the decimal interpretation is reasonable, prefer decimal.
+    // This catches handwriting OCR errors like "55,06" → "55.006" → 55006.
+    if (asThousands > 1000) {
+      return roundCurrency(asFractional);
+    }
+    return asThousands;
+  }
+
+  // Standard case: delegate to parseAmountFlexible
+  return parseAmountFlexible(cleaned);
 }
 
 /**
@@ -125,6 +192,41 @@ function mostFrequentVendor(docs: AzureDocument[]): string | null {
     }
   }
   return best;
+}
+
+/**
+ * Sanitize the Azure Total amount for receipts.
+ * Detects handwriting OCR errors where Azure misinterprets a decimal separator
+ * as a German thousands separator.
+ *
+ * Example: handwritten "55,06" → Azure OCR "55.006" → valueCurrency 55006 EUR.
+ * The content field "€\n55.006" reveals the dot+3-digits pattern.
+ * When the currency amount > 1000 and content shows this pattern,
+ * re-interpret as a decimal number (55.006 ≈ 55.01 EUR).
+ */
+function sanitizeReceiptTotal(
+  amount: number | null,
+  totalField?: AzureField | null
+): number | null {
+  if (amount == null || amount <= 1000) return amount;
+  if (!totalField?.content) return amount;
+
+  // Extract the numeric part from content (strip currency symbols, whitespace, newlines)
+  const numStr = totalField.content.replace(/[€$\s\n\r]/g, "");
+
+  // Check for "X.XXX" pattern: dot + exactly 3 digits at end, no comma anywhere
+  const match = numStr.match(/^(\d+)\.(\d{3})$/);
+  if (match && !numStr.includes(",")) {
+    // Azure interpreted this as a thousands separator → amount is X*1000+XXX.
+    // But for receipts > 1000 EUR this is likely a decimal misread from handwriting.
+    // Re-interpret the dot as a decimal separator.
+    const corrected = parseFloat(`${match[1]}.${match[2]}`);
+    if (Number.isFinite(corrected)) {
+      return roundCurrency(corrected);
+    }
+  }
+
+  return amount;
 }
 
 export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseResult {
@@ -203,7 +305,11 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
   const doc = docs[0];
   const fields = doc.fields || {};
   const confidence = doc.confidence || null;
-  const singleTotal = getNumber(fields.Total);
+  const rawSingleTotal = getNumber(fields.Total);
+
+  // Sanitize the Azure total: detect handwriting OCR decimal errors
+  // e.g. Azure content "55.006" → valueCurrency 55006, but real amount is 55.01 or similar
+  const singleTotal = sanitizeReceiptTotal(rawSingleTotal, fields.Total);
 
   // Check OCR for additional amounts
   const ocrExtraction = extractReceiptItemsFromOcr(contentText);
@@ -212,6 +318,14 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
     singleTotal != null &&
     ocrExtraction.total > 0 &&
     Math.abs(ocrExtraction.total - singleTotal) > 0.01;
+
+  // Also check: if Azure total is implausibly large compared to OCR amounts,
+  // prefer the OCR extraction even with a single OCR amount.
+  const azureTotalImplausible =
+    singleTotal != null &&
+    ocrExtraction.total > 0 &&
+    singleTotal > ocrExtraction.total * 10 &&
+    singleTotal > 500;
 
   if (hasMultipleOcrAmounts && ocrTotalDiffersFromAzure) {
     // OCR found more receipts than Azure – use OCR extraction
@@ -232,7 +346,35 @@ export function mapAzureReceiptToParseResult(azureResult: unknown): AzureParseRe
         extractionPipeline: "items" as const,
         itemsCount: ocrExtraction.items.length,
         ocrMultiReceipt: true,
-        azureSingleTotal: singleTotal,
+        azureSingleTotal: rawSingleTotal,
+        ocrTotal: ocrExtraction.total,
+      },
+    };
+
+    return { parsed, confidence, rawResponse: azureResult };
+  }
+
+  if (azureTotalImplausible && ocrExtraction.items.length >= 1) {
+    // Azure total is wildly off (e.g. handwriting "55,06" → 55006) but OCR found
+    // plausible amounts. Use OCR extraction as fallback.
+    const ocrTotalVat = getNumber(fields.TotalTax);
+    const ocrTotalNet = ocrTotalVat != null ? roundCurrency(ocrExtraction.total - ocrTotalVat) : null;
+    const parsed: ParsedDocument = {
+      sourceType: "receipt",
+      documentType: "receipt",
+      invoiceNumber: extractInvoiceNumber(contentText) ?? undefined,
+      invoiceDate: resolvePreferredDate(fields.TransactionDate) ?? extractLatestDateFromOcr(contentText) ?? undefined,
+      vendorName: cleanPartyName(getValue(fields.MerchantName)),
+      totalNet: ocrTotalNet,
+      totalVat: ocrTotalVat,
+      totalGross: ocrExtraction.total,
+      currency: ocrCurrency || fields.Total?.valueCurrency?.currencyCode || "EUR",
+      lineItems: ocrExtraction.items,
+      rawMeta: {
+        extractionPipeline: "items" as const,
+        itemsCount: ocrExtraction.items.length,
+        implausibleAzureTotal: true,
+        azureSingleTotal: rawSingleTotal,
         ocrTotal: ocrExtraction.total,
       },
     };
