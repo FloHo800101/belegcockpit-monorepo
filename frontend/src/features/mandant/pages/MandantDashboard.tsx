@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { Plus, ChevronRight, ChevronDown, CheckCircle2, Eye, Upload, AlertCircle } from 'lucide-react';
+import { Plus, ChevronRight, ChevronDown, CheckCircle2, Eye, Upload, AlertCircle, LayoutDashboard } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useState, useEffect } from 'react';
 import { getMyTenantId, loadProcessedMonths } from '@/lib/documentApi';
@@ -82,6 +82,10 @@ export default function MandantDashboard() {
     navigate(`/mandant/monat/${monthId}/abschluss`);
   };
 
+  const handleAmpelClick = () => {
+    navigate(`/mandant/monat/${currentMonthId ?? 'januar-2026'}/ampel`);
+  };
+
   return (
     <div className="space-y-fluid-lg">
       {/* Header */}
@@ -145,13 +149,19 @@ export default function MandantDashboard() {
                   </p>
                 </div>
 
-                {/* Right side: CTA Button */}
-                <Button 
-                  onClick={handleTasksClick} 
-                  className="bg-[hsl(var(--status-missing))] hover:bg-[hsl(var(--status-missing))]/90 text-white shrink-0"
-                >
-                  Offene Punkte ansehen
-                </Button>
+                {/* Right side: CTA Buttons */}
+                <div className="flex flex-col gap-2 shrink-0">
+                  <Button
+                    onClick={handleTasksClick}
+                    className="bg-[hsl(var(--status-missing))] hover:bg-[hsl(var(--status-missing))]/90 text-white"
+                  >
+                    Offene Punkte ansehen
+                  </Button>
+                  <Button variant="outline" onClick={handleAmpelClick}>
+                    <LayoutDashboard className="mr-2 h-4 w-4" />
+                    Ampel-Übersicht
+                  </Button>
+                </div>
               </div>
             </div>
           )}

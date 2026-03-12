@@ -86,6 +86,9 @@ const App = () => (
 
                 <Route path="/mandant/uebergabe/:monthId" element={<ProtectedRoute><MandantUebergabe /></ProtectedRoute>} />
 
+                {/* Demo: Ampel mit Mock-Daten (kein Matching erforderlich) */}
+                <Route path="/mandant/ampel-demo" element={<Navigate to="/mandant/monat/januar-2026/ampel" replace />} />
+
                 {/* Test: Progressive Disclosure Screen */}
                 <Route path="/mandant/test-progressive-disclosures" element={<ProtectedRoute><TestProgressiveDisclosure /></ProtectedRoute>} />
 
