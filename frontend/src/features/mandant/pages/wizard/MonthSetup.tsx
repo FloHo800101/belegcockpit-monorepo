@@ -364,14 +364,6 @@ export default function MonthSetup() {
                   <div className="text-2xl font-bold text-foreground">{dringendCount} dringende Punkte</div>
                   <div className="text-sm text-muted-foreground">Insgesamt {openItemsCount} offene Punkte</div>
                 </div>
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  onClick={() => navigate(`/mandant/monat/${monthId}/ampel`)}
-                >
-                  <LayoutDashboard className="mr-2 h-4 w-4" />
-                  Ampel-Übersicht anzeigen
-                </Button>
               </CardContent>
             </Card>
           )}
@@ -379,13 +371,24 @@ export default function MonthSetup() {
 
         {/* Bottom Navigation */}
         <div className="fixed bottom-0 left-64 right-0 border-t bg-card px-6 py-4">
-          <div className="max-w-[1720px] mx-auto flex justify-between">
+          <div className="max-w-[1720px] mx-auto flex justify-between items-center">
             <Button variant="outline" onClick={goToDashboard}>
               <ArrowLeft className="mr-2 h-4 w-4" /> Zurück zum Dashboard
             </Button>
-            <Button onClick={handleNext}>
-              Weiter <ArrowRight className="ml-2 h-4 w-4" />
-            </Button>
+            <div className="flex gap-3">
+              {existingMonthMatchingComplete && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/mandant/monat/${monthId}/ampel`)}
+                >
+                  <LayoutDashboard className="mr-2 h-4 w-4" />
+                  Ampel-Übersicht
+                </Button>
+              )}
+              <Button onClick={handleNext}>
+                Weiter <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </div>
       </>
@@ -604,14 +607,6 @@ export default function MonthSetup() {
                 <div className="text-2xl font-bold text-foreground">{dringendCount} dringende Punkte</div>
                 <div className="text-sm text-muted-foreground">Insgesamt {openItemsCount} offene Punkte</div>
               </div>
-              <Button
-                variant="outline"
-                className="w-full"
-                onClick={() => navigate(`/mandant/monat/${selectedMonth}/ampel`)}
-              >
-                <LayoutDashboard className="mr-2 h-4 w-4" />
-                Ampel-Übersicht anzeigen
-              </Button>
             </CardContent>
           </Card>
         )}
@@ -619,13 +614,24 @@ export default function MonthSetup() {
 
       {/* Bottom Navigation */}
       <div className="fixed bottom-0 left-64 right-0 border-t bg-card px-6 py-4">
-        <div className="max-w-[1720px] mx-auto flex justify-between">
+        <div className="max-w-[1720px] mx-auto flex justify-between items-center">
           <Button variant="outline" onClick={goToDashboard}>
             <ArrowLeft className="mr-2 h-4 w-4" /> Zurück zum Dashboard
           </Button>
-          <Button onClick={handleNext} disabled={!matchingComplete}>
-            Weiter <ArrowRight className="ml-2 h-4 w-4" />
-          </Button>
+          <div className="flex gap-3">
+            {matchingComplete && (
+              <Button
+                variant="outline"
+                onClick={() => navigate(`/mandant/monat/${selectedMonth}/ampel`)}
+              >
+                <LayoutDashboard className="mr-2 h-4 w-4" />
+                Ampel-Übersicht
+              </Button>
+            )}
+            <Button onClick={handleNext} disabled={!matchingComplete}>
+              Weiter <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
+          </div>
         </div>
       </div>
     </>
