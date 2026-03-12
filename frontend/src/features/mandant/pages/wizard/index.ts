@@ -1,6 +1,7 @@
 // Wizard Components
 export { default as WizardLayout } from './WizardLayout';
 export { default as MonthSetup } from './MonthSetup';
+export { default as MonthAmpel } from './MonthAmpel';
 export { default as OpenItems } from './OpenItems';
 export { default as ClusterDetail } from './ClusterDetail';
 export { default as UncertainMatches } from './UncertainMatches';

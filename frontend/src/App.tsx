@@ -21,6 +21,7 @@ import MandantUebergabe from "@/features/mandant/pages/MandantUebergabe";
 import {
   WizardLayout,
   MonthSetup,
+  MonthAmpel,
   OpenItems,
   ClusterDetail,
   UncertainMatches,
@@ -75,6 +76,7 @@ const App = () => (
                 <Route path="/mandant/monat/:monthId" element={<ProtectedRoute><WizardLayout /></ProtectedRoute>}>
                   <Route index element={<Navigate to="offene-punkte" replace />} />
                   <Route path="setup" element={<MonthSetup />} />
+                  <Route path="ampel" element={<MonthAmpel />} />
                   <Route path="offene-punkte" element={<OpenItems />} />
                   <Route path="offene-punkte/:clusterId" element={<ClusterDetail />} />
                   <Route path="offene-punkte/review" element={<ReviewDetail />} />

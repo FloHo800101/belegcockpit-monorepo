@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, Calendar, FileText, Upload, Check, CheckCircle2, Loader2, CreditCard } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Calendar, FileText, Upload, Check, CheckCircle2, Loader2, CreditCard, LayoutDashboard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -364,6 +364,14 @@ export default function MonthSetup() {
                   <div className="text-2xl font-bold text-foreground">{dringendCount} dringende Punkte</div>
                   <div className="text-sm text-muted-foreground">Insgesamt {openItemsCount} offene Punkte</div>
                 </div>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => navigate(`/mandant/monat/${monthId}/ampel`)}
+                >
+                  <LayoutDashboard className="mr-2 h-4 w-4" />
+                  Ampel-Übersicht anzeigen
+                </Button>
               </CardContent>
             </Card>
           )}
@@ -596,6 +604,14 @@ export default function MonthSetup() {
                 <div className="text-2xl font-bold text-foreground">{dringendCount} dringende Punkte</div>
                 <div className="text-sm text-muted-foreground">Insgesamt {openItemsCount} offene Punkte</div>
               </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={() => navigate(`/mandant/monat/${selectedMonth}/ampel`)}
+              >
+                <LayoutDashboard className="mr-2 h-4 w-4" />
+                Ampel-Übersicht anzeigen
+              </Button>
             </CardContent>
           </Card>
         )}

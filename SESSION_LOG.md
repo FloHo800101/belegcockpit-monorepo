@@ -1,3 +1,86 @@
+## Session – 2026-03-11/12 (17)
+
+**Beteiligte Agenten:** General-Purpose (DB-Analyse, Belegprüfung)
+
+### Erledigte Aufgaben
+
+#### Vollständiger DB-Reset durchgeführt
+- Tenant `ec990ac9` komplett geleert (war bereits leer vom Reset Ende Session 16)
+- Reset-Skript angelegt: `backend/scripts/reset-tenant-data.sh` (Modus: `matching` oder `all`)
+
+#### Neue Belege für Jan/Feb 2023 hochgeladen und analysiert
+- User hat frische Daten hochgeladen; DB-Inhalt per REST API geprüft
+- 16 Dokumente für Januar 2023, mehrere für Februar/März 2023
+
+#### Belegtypen-Analyse und Klärungspunkte-Datei angelegt
+- `Klärungspunkte.md` neu erstellt als dauerhaftes Klärungsregister
+- **K-001:** Hays-Rechnungen als `INCOMING_INVOICE` klassifiziert – korrekt wäre `OUTGOING_INVOICE` (User erhält Geld von Hays). Matching schlägt fehl wegen falscher `amountDirectionOk()`-Prüfung
+- **K-002:** Multi-Beleg-Seite – DIN-A4 mit 2–3 aufgetackerten Quittungen → System erzeugt nur 1 Invoice statt mehrere. Azure erkennt `ocrMultiReceipt: true` + 6 lineItems (Wiener Linien Einzeltickets), erzeugt aber nur 1 Gesamtdatensatz (14,40 EUR)
+- **K-003:** Taxi-Beleg (Rashed GmbH) initial mit 55.006 EUR geparst (Parsing-Fehler), danach 69,91 EUR – Azure hat Auftragsnummer als Betrag interpretiert
+
+#### Belegdaten Februar 2023 analysiert
+- 11 Belege mit `invoice_date` Feb 2023 gefunden
+- Hays AT (11.509,46 EUR) + Hays DE (4.373,55 EUR) fälschlicherweise als `INCOMING_INVOICE`
+- `2303_Reisekosten_i.pdf` (Taxi) hat `invoice_date: 2023-03-14` → taucht in Feb-Liste nicht auf (Dateiname sollte `2302_...` sein)
+- `2303_Reisekosten_ii.pdf` (Wiener Linien) hat `invoice_date: 2023-02-17` → korrekt in Feb
+
+### Entscheidungen
+- Klärungspunkte-Datei als dauerhaftes Register statt Ad-hoc-Notizen
+
+### Offene Punkte
+- K-001: OUTGOING_INVOICE Typ einführen + Vorzeichen-Logik für Hays
+- K-002: Multi-Receipt Splitting im processor.ts
+- K-003: Taxi-Betrag (Rashed GmbH) – wurde nach Reload als 69.91 EUR angezeigt; Ursprung des Fehlers (55k) noch ungeklärt
+- K-004: Belegstapel-Konzept – periodenübergreifende Belege, beleglose Txs, Monat-Abschluss-Workflow
+- K-005: UX-Schwachstellen (deferred nach K-004)
+- Matching für Jan/Feb 2023 noch nicht gestartet; DB neu befüllt aber run-matching noch nicht aufgerufen
+- UX-Review ausstehend: Mandant schickt 5-8 Screenshots der Frontend-Screens
+
+### Geänderte Dateien
+- `Klärungspunkte.md` – neu erstellt (K-001, K-002, K-003)
+- `backend/scripts/reset-tenant-data.sh` – neu erstellt
+
+---
+
+## Session – 2026-03-09/10 (16)
+
+**Beteiligte Agenten:** General-Purpose (DB-Analyse, Migration)
+
+### Erledigte Aufgaben
+
+#### Matching-Pipeline Debugging: Januar 2023 zeigt 0 Matches
+- **Ursache 1: Duplikate durch mehrere Kontoauszüge** – Zwei verschiedene Kontoauszüge enthielten dieselben Januar-Transaktionen. Die unique-constraint `(tenant_id, source_document_id, source_index)` verhindert Duplikate NUR pro Source-Dokument, nicht über verschiedene Dateien.
+- **Ursache 2: Tenant-Split** – Uploads vom 6. März liefen unter Tenant `a6a3fd7d` (nicht mehr in tenants-Tabelle), Uploads vom 9. März unter `ec990ac9` (aktiver User). Engine konnte nur `ec990ac9`-Daten matchen → nur 5 statt 16 Januar-Transaktionen geladen.
+- **Ursache 3: 0 Matches ist korrekt** – Januar-Transaktionen (Schmechel, BARMER 914.29, Hays 7111.74, Finanzamt, Kreditkarte) haben keine Rechnungsbetragsübereinstimmung. BARMER-Rechnung ist 942.64 ≠ 914.29 (anderer Monatsbeitrag).
+
+#### Tenant-Migration durchgeführt
+- 399 bank_transactions, 143 invoices, 166 documents von `a6a3fd7d` → `ec990ac9`
+- 16 Dokument-Hash-Konflikte (Jan 2023 Belege): a6a3fd7d-Versionen gelöscht, ec990ac9-Versionen bleiben
+- source_document_id für Feb-Kontoauszug-Transaktionen von `80c19e35` auf `30e1d42e` remappt
+- Alle Daten nun unter `ec990ac9` (2022-01 bis 2023-12)
+
+#### Duplikat-Bereinigung
+- 12 doppelte bank_transactions aus zweitem Kontoauszug gelöscht
+- 12 doppelte Rechnungen gelöscht (unlinked Kopien von bereits gematchten linked Versionen)
+
+#### Matching-Ergebnis nach Migration
+- Januar 2023: `txCount=16, docCount=161, finalMatches=0, suggested=0` (korrekt – keine Betragsmatches)
+- Februar 2023: `txCount=17, docCount=161, finalMatches=0, suggested=1` (Mercure 401.76€ ↔ Maestro -401.76€)
+
+### Entscheidungen
+- **0 Matches für Januar ist korrekt** – Reisekosten wurden per Kreditkarte bezahlt, kein Direktmatch möglich
+- **Soft-Match Schwelle 0.65** ist vernünftig; Mercure/Maestro-Paar (0.70) wird korrekt als Vorschlag angezeigt
+
+### Offene Punkte
+- Bank-TX-Deduplizierung über verschiedene Kontoauszüge (content-hash-basiert: booking_date+amount+iban+reference)
+- BARMER-Betragsdiskrepanz (914.29 vs 942.64) analysieren
+- Februar Edge-Function-Deployment: Tilo's Änderungen sind noch nicht deployed (last deployed Feb 24)
+
+### Geänderte Dateien
+- (keine Code-Änderungen; nur DB-Daten-Migration via REST API)
+
+---
+
 ## Session – 2026-03-06 (15)
 
 **Beteiligte Agenten:** Explore, General-Purpose (DB-Analyse x3)
